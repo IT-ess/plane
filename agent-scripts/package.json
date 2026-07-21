@@ -1,0 +1,14 @@
+{
+  "name": "issue-agent",
+  "type": "module",
+  "scripts": {
+    "start": "tsx issue-agent.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "latest"
+  },
+  "devDependencies": {
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}
