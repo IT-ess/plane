@@ -1,5 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
 import { adjustPriority } from "./priority";
 
 const ISSUE = {
@@ -9,9 +10,27 @@ const ISSUE = {
   repo: process.env.GITHUB_REPOSITORY!,
 };
 
-async function runStep(name: string, prompt: string): Promise<string> {
+// ponytail: assumes entrypoint runs from agent-scripts/ (the workflow + test-local both do).
+const REPO_ROOT = resolve(process.cwd(), "..");
+// Each step only gets the one skill it needs (used both for loading and the fail-fast guard).
+const SKILL = {
+  analysis: "user-feedback-synthesizer",
+  rice: "feature-prioritization-assistant",
+  alignment: "plane-product-strategy",
+  story: "prd-writer",
+} as const;
+
+async function runStep(name: string, prompt: string, skills: string[] = []): Promise<string> {
   console.log(`\n${"─".repeat(60)}\n[${name.toUpperCase()}]\n${"─".repeat(60)}`);
-  for await (const msg of query({ prompt, options: { allowedTools: ["Bash"] } })) {
+  for await (const msg of query({
+    prompt,
+    options: {
+      allowedTools: ["Bash"],
+      cwd: REPO_ROOT,
+      settingSources: ["project"],
+      skills,
+    },
+  })) {
     if (msg.type === "result") {
       if ((msg as any).is_error) throw new Error(`Step "${name}" failed`);
       break;
@@ -73,7 +92,7 @@ Replace <type>, confidence, and reasoning with your actual assessment.
 function analysisPrompt(triage: Record<string, unknown>) {
   return `
 You are a user research expert and product analyst for Plane, a project management platform.
-Apply the User Feedback Synthesizer framework to this issue.
+Use the \`user-feedback-synthesizer\` skill (invoke it via the Skill tool) to analyze this issue.
 
 ## Context
 Issue #${ISSUE.number}: "${ISSUE.title}"
@@ -119,6 +138,7 @@ function ricePrompt(
   const hasAnalysis = Object.keys(analysis).length > 0;
   return `
 You are a senior product manager for Plane, a project management platform used by software teams.
+Use the \`feature-prioritization-assistant\` skill (invoke it via the Skill tool) for the RICE method.
 
 ## Issue
 #${ISSUE.number}: "${ISSUE.title}"
@@ -204,7 +224,7 @@ function alignmentPrompt(
 ) {
   return `
 You are a senior product strategist for Plane, a project management platform.
-Apply the Plane Product Strategy framework to judge this issue's strategic fit.
+Use the \`plane-product-strategy\` skill (invoke it via the Skill tool) to judge this issue's strategic fit.
 
 ## Issue
 #${ISSUE.number}: "${ISSUE.title}"
@@ -257,7 +277,7 @@ okrsServed may be empty when score is 0.
 function storyPrompt(analysis: Record<string, unknown>) {
   return `
 You are a senior product owner for Plane, a project management platform.
-Apply the PRD Writer framework to structure this user story.
+Use the \`prd-writer\` skill (invoke it via the Skill tool) to structure this user story.
 
 ## Context
 Issue #${ISSUE.number}: "${ISSUE.title}"
@@ -466,6 +486,12 @@ async function main() {
   console.log(`\nIssue Agent starting for #${ISSUE.number}: "${ISSUE.title}"`);
   console.log(`Repository: ${ISSUE.repo}`);
 
+  // Fail fast if a skill name won't resolve — otherwise the SDK just silently omits it.
+  for (const s of Object.values(SKILL)) {
+    if (!existsSync(`${REPO_ROOT}/.claude/skills/${s}`))
+      throw new Error(`Skill "${s}" not found under .claude/skills/ — check the name`);
+  }
+
   // Step 1 — Triage (always)
   const triageJson = await runStep("triage", triagePrompt());
   const triage = parse(triageJson);
@@ -476,18 +502,18 @@ async function main() {
   // Step 2 — Analysis (skipped for bugs and questions)
   let analysis: Record<string, unknown> = {};
   if (!isBugOrQuestion) {
-    const analysisJson = await runStep("analysis", analysisPrompt(triage));
+    const analysisJson = await runStep("analysis", analysisPrompt(triage), [SKILL.analysis]);
     analysis = parse(analysisJson);
     console.log(`  → pain points: ${((analysis.painPoints as string[]) ?? []).length}, related: ${((analysis.relatedIssues as unknown[]) ?? []).length}`);
   }
 
   // Step 3 — RICE (always)
-  const riceJson = await runStep("rice", ricePrompt(triage, analysis));
+  const riceJson = await runStep("rice", ricePrompt(triage, analysis), [SKILL.rice]);
   const rice = parse(riceJson);
   console.log(`  → RICE: ${rice.riceScore} (${rice.priority})`);
 
   // Step 4 — Strategic alignment (always) — modulates the RICE priority
-  const alignmentJson = await runStep("alignment", alignmentPrompt(triage, analysis, rice));
+  const alignmentJson = await runStep("alignment", alignmentPrompt(triage, analysis, rice), [SKILL.alignment]);
   const alignment = parse(alignmentJson);
   // Guard: recompute the tier bump from the model's score so the label can't drift from the rule.
   alignment.adjustedPriority = adjustPriority(rice.priority, alignment.alignmentScore);
@@ -496,7 +522,7 @@ async function main() {
   // Step 5 — User story (feature-request and feedback only)
   let story: Record<string, unknown> = {};
   if (!isBugOrQuestion) {
-    const storyJson = await runStep("story", storyPrompt(analysis));
+    const storyJson = await runStep("story", storyPrompt(analysis), [SKILL.story]);
     story = parse(storyJson);
     console.log(`  → complexity: ${story.complexity}`);
   }
