@@ -12,6 +12,36 @@ const ISSUE = {
 
 // ponytail: assumes entrypoint runs from agent-scripts/ (the workflow + test-local both do).
 const REPO_ROOT = resolve(process.cwd(), "..");
+
+// Skip GitHub side effects (labels + comment) so a local run can exercise the Plane path alone.
+const POST_GH = process.env.SKIP_GITHUB !== "1";
+
+// The team's own Plane project — it dogfoods Plane to build Plane.
+// Hardcoded to the demo workspace. ponytail: re-fetch via list_projects/list_states if the workspace is recreated.
+const PLANE_PROJECT_ID = "024d5c16-fab9-4bca-b57d-72e16db1183a"; // Plane-agent-demo
+const PLANE_INTAKE_STATE = "055a5cd7-72ba-45b9-9c9e-dd577c022e8a"; // "Github intakes" state
+// CI has no cached OAuth, so authenticate the Plane MCP with a Personal Access Token instead.
+// When PLANE_API_KEY is set (CI), use the api-key endpoint; otherwise fall back to the local OAuth cache (dev).
+const PLANE_MCP = process.env.PLANE_API_KEY
+  ? {
+      plane: {
+        type: "http" as const,
+        url: "https://mcp.plane.so/http/api-key/mcp",
+        headers: {
+          "x-api-key": process.env.PLANE_API_KEY,
+          "x-workspace-slug": process.env.PLANE_WORKSPACE_SLUG ?? "",
+        },
+      },
+    }
+  : undefined;
+const PUBLISH_TOOLS = [
+  "Bash",
+  "mcp__plane__search_work_items",
+  "mcp__plane__list_labels",
+  "mcp__plane__create_label",
+  "mcp__plane__create_work_item",
+  "mcp__plane__create_work_item_comment",
+];
 // Each step only gets the one skill it needs (used both for loading and the fail-fast guard).
 const SKILL = {
   analysis: "user-feedback-synthesizer",
@@ -20,14 +50,17 @@ const SKILL = {
   story: "prd-writer",
 } as const;
 
-async function runStep(name: string, prompt: string, skills: string[] = []): Promise<string> {
+async function runStep(name: string, prompt: string, skills: string[] = [], allowedTools: string[] = ["Bash"]): Promise<string> {
   console.log(`\n${"─".repeat(60)}\n[${name.toUpperCase()}]\n${"─".repeat(60)}`);
   for await (const msg of query({
     prompt,
     options: {
-      allowedTools: ["Bash"],
+      allowedTools,
       cwd: REPO_ROOT,
-      settingSources: ["project"],
+      // "local" so dev runs pick up the `plane` MCP config (local scope of ~/.claude.json) + its cached OAuth.
+      settingSources: ["project", "local"],
+      // In CI, PLANE_MCP injects the api-key endpoint explicitly (no OAuth cache available).
+      ...(PLANE_MCP ? { mcpServers: PLANE_MCP } : {}),
       skills,
     },
   })) {
@@ -71,8 +104,8 @@ ${ISSUE.body}
    - question      (asking how something works)
    - other         (doesn't fit above)
 
-2. Apply the matching label:
-   gh issue edit ${ISSUE.number} --repo ${ISSUE.repo} --add-label "<type>"
+2. ${POST_GH ? `Apply the matching label:
+   gh issue edit ${ISSUE.number} --repo ${ISSUE.repo} --add-label "<type>"` : "(GitHub labeling skipped in local test mode — do not run gh.)"}
 
 3. Write your result to /tmp/triage.json using Python:
    python3 -c "
@@ -337,16 +370,15 @@ json.dump(data, open('/tmp/story.json', 'w'))
 `.trim();
 }
 
-function postPrompt(
+// Builds the shared analysis markdown — reused for the GitHub comment and the Plane work-item comment.
+function buildComment(
   triage: Record<string, unknown>,
   analysis: Record<string, unknown>,
   rice: Record<string, unknown>,
   alignment: Record<string, unknown>,
-  story: Record<string, unknown>
+  story: Record<string, unknown>,
+  finalPriority: string
 ) {
-  // Applied priority = alignment-adjusted, falling back to raw RICE if alignment missing.
-  const finalPriority =
-    (alignment.adjustedPriority as string) ?? (rice.priority as string);
   const okrsServed = (alignment.okrsServed as string[]) ?? [];
   const hasStory = !!story.userStory;
   const hasAnalysis = !!(analysis.painPoints as unknown[])?.length;
@@ -464,6 +496,10 @@ ${
 <sub>🔬 Powered by Claude · RICE score auto-prioritizes the backlog · Labels applied automatically</sub>
 `.trim();
 
+  return comment;
+}
+
+function postPrompt(finalPriority: string, comment: string) {
   return `
 You are posting an automated analysis comment on a GitHub issue for Plane.
 
@@ -477,6 +513,62 @@ You are posting an automated analysis comment on a GitHub issue for Plane.
 
 3. Confirm success by writing to /tmp/post.json:
    python3 -c "import json; json.dump({'done': True}, open('/tmp/post.json', 'w'))"
+`.trim();
+}
+
+// Minimal HTML for the work-item description — Plane renders HTML, not markdown.
+function storyHtml(story: Record<string, unknown>) {
+  const esc = (s: unknown) =>
+    String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  if (!story.userStory)
+    return `<p>${esc(ISSUE.body)}</p>`; // bug/question: no story → fall back to the issue body
+  const criteria = (story.acceptanceCriteria as string[]) ?? [];
+  return [
+    story.problemStatement ? `<p><strong>Problem:</strong> ${esc(story.problemStatement)}</p>` : "",
+    `<blockquote>${esc(story.userStory)}</blockquote>`,
+    criteria.length
+      ? `<p><strong>Acceptance criteria:</strong></p><ul>${criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>`
+      : "",
+    story.complexity ? `<p><strong>Complexity:</strong> ${esc(story.complexity)} — ${esc(story.complexityRationale)}</p>` : "",
+  ].filter(Boolean).join("");
+}
+
+function publishPrompt(
+  triage: Record<string, unknown>,
+  story: Record<string, unknown>,
+  finalPriority: string,
+  comment: string
+) {
+  const extId = `${ISSUE.repo}#${ISSUE.number}`;
+  const labelName = String(triage.type ?? "other");
+  return `
+You are publishing this issue as a work item in the team's own Plane project (they dogfood Plane).
+Use the Plane MCP tools. Project id: ${PLANE_PROJECT_ID}. Intake state id: ${PLANE_INTAKE_STATE}.
+
+Do these steps in order:
+
+1. DEDUP GUARD — call search_work_items(query="${extId}", external_source="github", external_id="${extId}").
+   If any result already links to this issue, STOP: write {"skipped": "duplicate"} to /tmp/publish.json and do nothing else.
+
+2. LABEL — call list_labels(project_id="${PLANE_PROJECT_ID}"). Find a label named exactly "${labelName}".
+   If none exists, create_label(project_id="${PLANE_PROJECT_ID}", name="${labelName}"). Keep its id.
+
+3. CREATE — create_work_item with:
+   - project_id="${PLANE_PROJECT_ID}"
+   - name="#${ISSUE.number} ${String(ISSUE.title).replace(/"/g, "'")}"
+   - description_html=<<<${storyHtml(story)}>>>
+   - state="${PLANE_INTAKE_STATE}"
+   - priority="${finalPriority}"
+   - labels=[<the label id from step 2>]
+   - external_source="github", external_id="${extId}"
+   Keep the returned work item id.
+
+4. COMMENT — create_work_item_comment(project_id="${PLANE_PROJECT_ID}", work_item_id=<new id>, comment_html) with the FULL analysis below, passed verbatim as comment_html:
+<<<
+${comment}
+>>>
+
+5. Write {"workItemId": "<new id>", "skipped": false} to /tmp/publish.json using python3.
 `.trim();
 }
 
@@ -527,9 +619,25 @@ async function main() {
     console.log(`  → complexity: ${story.complexity}`);
   }
 
-  // Step 6 — Post comment + priority label (always)
-  await runStep("post", postPrompt(triage, analysis, rice, alignment, story));
-  console.log("\n✅ Analysis posted to issue #" + ISSUE.number);
+  const finalPriority = alignment.adjustedPriority as string; // recomputed above from the alignment score
+  const comment = buildComment(triage, analysis, rice, alignment, story, finalPriority);
+
+  // Step 6 — Post comment + priority label to GitHub (skipped in local test mode)
+  if (POST_GH) {
+    await runStep("post", postPrompt(finalPriority, comment));
+    console.log("\n✅ Analysis posted to issue #" + ISSUE.number);
+  } else {
+    console.log("\n⏭️  SKIP_GITHUB=1 — skipped GitHub label + comment");
+  }
+
+  // Step 7 — Publish as a work item in the team's Plane project (always)
+  const publishJson = await runStep("publish", publishPrompt(triage, story, finalPriority, comment), [], PUBLISH_TOOLS);
+  const publish = parse(publishJson);
+  console.log(
+    publish.skipped
+      ? `  → Plane: skipped (${publish.skipped})`
+      : `✅ Plane work item created: ${publish.workItemId}`
+  );
 }
 
 main().catch((err) => {
