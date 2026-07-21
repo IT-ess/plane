@@ -1,5 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, existsSync } from "fs";
+import { adjustPriority } from "./priority";
 
 const ISSUE = {
   number: process.env.ISSUE_NUMBER!,
@@ -196,6 +197,63 @@ json.dump(data, open('/tmp/rice.json', 'w'))
 `.trim();
 }
 
+function alignmentPrompt(
+  triage: Record<string, unknown>,
+  analysis: Record<string, unknown>,
+  rice: Record<string, unknown>
+) {
+  return `
+You are a senior product strategist for Plane, a project management platform.
+Apply the Plane Product Strategy framework to judge this issue's strategic fit.
+
+## Issue
+#${ISSUE.number}: "${ISSUE.title}"
+Type: ${triage.type}
+Feature intent: ${analysis.featureIntent ?? ISSUE.title}
+RICE priority (before alignment): ${rice.priority ?? "medium"}
+
+Body:
+${ISSUE.body}
+
+## Plane's OKRs (illustrative)
+- O1 — Win the "AI-native PM" category (Plane AI auto-triage/assignment, MCP/agent connectors, AI-assisted actions).
+- O2 — Become the default open-source Jira/Linear alternative (activation, Jira/Linear migration, OSS/community growth).
+- O3 — Deepen the unified workspace (Projects + Wiki + AI depth, cross-module usage, cycles/velocity).
+- O4 — Enterprise & self-host readiness (self-hosted/air-gapped deployments, security/compliance, admin-workflow automation).
+
+## Scoring (alignmentScore 0-3)
+- 3 = advances multiple OKRs, or a core KR of one
+- 2 = clearly advances exactly one OKR
+- 1 = tangential / only indirect or cosmetic help
+- 0 = off-strategy, or actively conflicts
+
+## Modulation of RICE priority
+- score 3 → bump priority UP one tier (low→medium→high, clamped)
+- score 0 → bump priority DOWN one tier (high→medium→low, clamped)
+- score 1 or 2 → keep the RICE priority unchanged
+
+Write to /tmp/alignment.json using Python:
+python3 -c "
+import json
+rice_priority = '${rice.priority ?? "medium"}'
+score = <0|1|2|3>
+tiers = ['low', 'medium', 'high']
+idx = tiers.index(rice_priority) if rice_priority in tiers else 1
+delta = 1 if score == 3 else (-1 if score == 0 else 0)
+adjusted = tiers[max(0, min(2, idx + delta))]
+data = {
+    'okrsServed': [<'O1'|'O2'|'O3'|'O4', ...>],
+    'alignmentScore': score,
+    'adjustedPriority': adjusted,
+    'rationale': '<one sentence: which OKRs and why this score>'
+}
+json.dump(data, open('/tmp/alignment.json', 'w'))
+"
+
+okrsServed may be empty when score is 0.
+`.trim();
+}
+
 function storyPrompt(analysis: Record<string, unknown>) {
   return `
 You are a senior product owner for Plane, a project management platform.
@@ -263,8 +321,13 @@ function postPrompt(
   triage: Record<string, unknown>,
   analysis: Record<string, unknown>,
   rice: Record<string, unknown>,
+  alignment: Record<string, unknown>,
   story: Record<string, unknown>
 ) {
+  // Applied priority = alignment-adjusted, falling back to raw RICE if alignment missing.
+  const finalPriority =
+    (alignment.adjustedPriority as string) ?? (rice.priority as string);
+  const okrsServed = (alignment.okrsServed as string[]) ?? [];
   const hasStory = !!story.userStory;
   const hasAnalysis = !!(analysis.painPoints as unknown[])?.length;
   const relatedIssues = (analysis.relatedIssues as Array<{ number: number; title: string }>) ?? [];
@@ -302,6 +365,18 @@ function postPrompt(
 **RICE Score: ${rice.riceScore}** → Priority: \`${rice.priority}\`
 
 > ${rice.justification}
+
+---
+
+### 🎯 Strategic Alignment
+
+| Field | Value |
+|-------|-------|
+| **OKRs served** | ${okrsServed.length ? okrsServed.join(", ") : "none"} |
+| **Alignment score** | ${alignment.alignmentScore ?? "—"} / 3 |
+| **Applied priority** | \`${rice.priority}\` → \`${finalPriority}\`${finalPriority === rice.priority ? " (unchanged)" : ""} |
+
+> ${alignment.rationale ?? "No strategic rationale provided."}
 ${
   hasAnalysis
     ? `
@@ -375,7 +450,7 @@ You are posting an automated analysis comment on a GitHub issue for Plane.
 ## Tasks
 
 1. Apply the priority label:
-   gh issue edit ${ISSUE.number} --repo ${ISSUE.repo} --add-label "priority:${rice.priority}"
+   gh issue edit ${ISSUE.number} --repo ${ISSUE.repo} --add-label "priority:${finalPriority}"
 
 2. Post the following comment exactly as-is (do not modify the markdown):
    gh issue comment ${ISSUE.number} --repo ${ISSUE.repo} --body '${comment.replace(/'/g, "'\\''")}'
@@ -411,7 +486,14 @@ async function main() {
   const rice = parse(riceJson);
   console.log(`  → RICE: ${rice.riceScore} (${rice.priority})`);
 
-  // Step 4 — User story (feature-request and feedback only)
+  // Step 4 — Strategic alignment (always) — modulates the RICE priority
+  const alignmentJson = await runStep("alignment", alignmentPrompt(triage, analysis, rice));
+  const alignment = parse(alignmentJson);
+  // Guard: recompute the tier bump from the model's score so the label can't drift from the rule.
+  alignment.adjustedPriority = adjustPriority(rice.priority, alignment.alignmentScore);
+  console.log(`  → alignment: ${alignment.alignmentScore}/3, priority ${rice.priority} → ${alignment.adjustedPriority} (OKRs: ${((alignment.okrsServed as string[]) ?? []).join(",") || "none"})`);
+
+  // Step 5 — User story (feature-request and feedback only)
   let story: Record<string, unknown> = {};
   if (!isBugOrQuestion) {
     const storyJson = await runStep("story", storyPrompt(analysis));
@@ -419,8 +501,8 @@ async function main() {
     console.log(`  → complexity: ${story.complexity}`);
   }
 
-  // Step 5 — Post comment + priority label (always)
-  await runStep("post", postPrompt(triage, analysis, rice, story));
+  // Step 6 — Post comment + priority label (always)
+  await runStep("post", postPrompt(triage, analysis, rice, alignment, story));
   console.log("\n✅ Analysis posted to issue #" + ISSUE.number);
 }
 
