@@ -71,7 +71,8 @@ Replace <type>, confidence, and reasoning with your actual assessment.
 
 function analysisPrompt(triage: Record<string, unknown>) {
   return `
-You are a product analyst for Plane, a project management platform.
+You are a user research expert and product analyst for Plane, a project management platform.
+Apply the User Feedback Synthesizer framework to this issue.
 
 ## Context
 Issue #${ISSUE.number}: "${ISSUE.title}"
@@ -82,23 +83,31 @@ ${ISSUE.body}
 
 ## Your tasks
 
-1. Search for related issues (try 2-3 different keyword searches):
+1. Search for related/duplicate issues (run 2-3 targeted searches):
    gh issue list --repo ${ISSUE.repo} --state all --search "<keywords>" --json number,title --limit 5
 
-2. Extract the key insights from the issue body.
+2. Synthesize the feedback by:
+   - Clustering signals into themes (what category of problem does each pain point belong to?)
+   - Assessing severity per theme: critical (blocks work) / high (major friction) / medium (notable inconvenience) / low (nice-to-have)
+   - Identifying quick wins (small-effort, high-visibility improvements buried in the request)
+   - Extracting the core feature intent (what job-to-be-done is the user trying to accomplish?)
 
 3. Write your analysis to /tmp/analysis.json using Python:
    python3 -c "
 import json
 data = {
-    'painPoints': ['<pain point 1>', '<pain point 2>'],
-    'featureIntent': '<what the user ultimately wants to achieve>',
+    'painPoints': ['<specific pain point 1>', '<specific pain point 2>'],
+    'featureIntent': '<the underlying job-to-be-done the user wants to accomplish>',
+    'themes': [
+        {'name': '<theme name>', 'severity': 'critical|high|medium|low', 'description': '<one sentence>'}
+    ],
+    'quickWins': ['<small improvement that could be shipped fast>'],
     'relatedIssues': [{'number': N, 'title': '...'}]
 }
 json.dump(data, open('/tmp/analysis.json', 'w'))
 "
 
-Replace all placeholders with real insights from the issue. relatedIssues may be empty if none found.
+relatedIssues may be empty. quickWins may be empty if none found.
 `.trim();
 }
 
@@ -129,32 +138,58 @@ ${ISSUE.body}
 
 ## RICE scoring task
 
-Score this issue using the RICE framework (each dimension 1–10):
-- Reach: How many Plane users would benefit? (10 = nearly all users)
-- Impact: How much does it improve their workflow? (10 = transformative)
-- Confidence: How certain are we of these estimates? (10 = very certain)
-- Effort: Engineering effort required (10 = huge multi-sprint effort)
+Use the standard RICE framework with these precise scales:
 
-RICE Score = (Reach × Impact × Confidence) / Effort (round to 1 decimal)
+**Reach** — estimated % of active Plane users affected per quarter (1–100):
+- 1–10: niche use case, very specific workflow
+- 11–30: subset of users (e.g., admins, API users, power users)
+- 31–60: a significant portion of users
+- 61–100: most or all users
 
-Priority thresholds:
-- high   → RICE ≥ 40
-- medium → RICE 15–39
-- low    → RICE < 15
+**Impact** — improvement magnitude per affected user (use exact values):
+- 0.25 = minimal (trivial UX polish)
+- 0.5  = low (noticeable but minor improvement)
+- 1    = medium (meaningful, saves time)
+- 2    = high (significant, removes real pain)
+- 3    = massive (transformative, unlocks key workflows)
+
+**Confidence** — certainty in estimates (10–100%):
+- High: strong user signals, data, or prior art → 80–100%
+- Medium: reasonable inference, some evidence → 50–75%
+- Low: assumption-heavy, unclear scope → 10–40%
+
+**Effort** — engineering effort in person-days (include design + dev + QA):
+- 1–3 d: trivial (config change, copy fix)
+- 4–10 d: small (new endpoint, UI component)
+- 11–20 d: medium (new feature area)
+- 21–60 d: large (cross-cutting, architectural)
+
+RICE Score = (Reach × Impact × Confidence/100) / Effort × 100  ← multiply by 100 to keep scores readable
+
+Priority thresholds (re-calibrated for this formula):
+- high   → RICE ≥ 15
+- medium → RICE 5–14
+- low    → RICE < 5
+
+Be honest about Confidence — use lower values when estimates rest on assumptions.
+Include design, development, and testing in Effort.
 
 Write to /tmp/rice.json using Python:
 python3 -c "
 import json
-reach, impact, confidence, effort = <R>, <I>, <C>, <E>
-rice = round((reach * impact * confidence) / effort, 1)
+reach = <1-100>        # % of users
+impact = <0.25|0.5|1|2|3>
+confidence = <10-100>  # percent
+effort = <person-days>
+rice = round((reach * impact * confidence / 100) / effort * 100, 1)
 data = {
     'reach': reach,
     'impact': impact,
     'confidence': confidence,
     'effort': effort,
     'riceScore': rice,
-    'priority': 'high' if rice >= 40 else ('medium' if rice >= 15 else 'low'),
-    'justification': '<2-3 sentences explaining the scores>'
+    'priority': 'high' if rice >= 15 else ('medium' if rice >= 5 else 'low'),
+    'justification': '<2-3 sentences explaining each score with specific reasoning>'
 }
 json.dump(data, open('/tmp/rice.json', 'w'))
 "
@@ -163,37 +198,59 @@ json.dump(data, open('/tmp/rice.json', 'w'))
 
 function storyPrompt(analysis: Record<string, unknown>) {
   return `
-You are a product owner assistant for Plane, a project management platform.
+You are a senior product owner for Plane, a project management platform.
+Apply the PRD Writer framework to structure this user story.
 
 ## Context
 Issue #${ISSUE.number}: "${ISSUE.title}"
 Feature intent: ${analysis.featureIntent ?? ISSUE.title}
 Pain points: ${JSON.stringify(analysis.painPoints ?? [])}
+Themes: ${JSON.stringify(analysis.themes ?? [])}
 
 Body:
 ${ISSUE.body}
 
 ## Your task
 
-Generate a structured user story. The persona should reflect the actual Plane user type
-(e.g., "project manager", "developer", "team lead", "product owner").
+Produce a structured story following PRD best practices:
 
-Complexity scale:
-- S  → trivial change, < 1 day
-- M  → a few days
+**Problem statement**: Clearly describe the current situation, the user's pain, and the business impact of NOT solving it.
+
+**User story**: "As a <persona>, I want <specific goal> so that <measurable benefit>."
+- Persona must be a real Plane user type (project manager / developer / team lead / product owner / admin)
+- Goal must be specific and actionable, not vague
+- Benefit must be measurable or at least concrete
+
+**Acceptance criteria** (3–5 items, Given/When/Then format):
+- Cover the happy path and at least one edge case
+- Each criterion must be independently testable
+
+**Success metrics**: 1–2 quantitative or observable metrics that would prove this feature is working (e.g., "API 404 rate for archive endpoint drops to 0", "support tickets about X decrease by 50%").
+
+**Scope**:
+- In scope: what IS part of this story
+- Out of scope: adjacent things that are explicitly NOT included
+
+**Complexity**:
+- S  → < 1 day
+- M  → 2–5 days
 - L  → 1–2 sprints
-- XL → multi-sprint, major effort
+- XL → multi-sprint
 
 Write to /tmp/story.json using Python:
 python3 -c "
 import json
 data = {
+    'problemStatement': '<current situation + user pain + business impact>',
     'userStory': 'As a <persona>, I want <goal> so that <benefit>.',
     'acceptanceCriteria': [
         'Given <context>, when <action>, then <outcome>.',
         '<criterion 2>',
         '<criterion 3>'
     ],
+    'successMetrics': ['<metric 1>', '<metric 2>'],
+    'inScope': ['<item 1>', '<item 2>'],
+    'outOfScope': ['<item 1>'],
     'complexity': 'S|M|L|XL',
     'complexityRationale': '<brief explanation>'
 }
@@ -211,8 +268,10 @@ function postPrompt(
   const hasStory = !!story.userStory;
   const hasAnalysis = !!(analysis.painPoints as unknown[])?.length;
   const relatedIssues = (analysis.relatedIssues as Array<{ number: number; title: string }>) ?? [];
+  const themes = (analysis.themes as Array<{ name: string; severity: string; description: string }>) ?? [];
+  const quickWins = (analysis.quickWins as string[]) ?? [];
 
-  const riceBar = (n: number) => "█".repeat(Math.round(n)) + "░".repeat(10 - Math.round(n));
+  const severityEmoji: Record<string, string> = { critical: "🔴", high: "🟠", medium: "🟡", low: "🟢" };
 
   const comment = `
 ## 🤖 AI Product Owner Analysis
@@ -233,12 +292,12 @@ function postPrompt(
 
 ### 📊 RICE Prioritization
 
-| Dimension | Score | Bar |
-|-----------|------:|-----|
-| Reach | ${rice.reach}/10 | \`${riceBar(rice.reach as number)}\` |
-| Impact | ${rice.impact}/10 | \`${riceBar(rice.impact as number)}\` |
-| Confidence | ${rice.confidence}/10 | \`${riceBar(rice.confidence as number)}\` |
-| Effort | ${rice.effort}/10 | \`${riceBar(rice.effort as number)}\` |
+| Dimension | Value | Notes |
+|-----------|------:|-------|
+| Reach | ${rice.reach}% of users | % of active users impacted |
+| Impact | ${rice.impact}x | 0.25 minimal → 3 massive |
+| Confidence | ${rice.confidence}% | certainty in estimates |
+| Effort | ${rice.effort} person-days | design + dev + QA |
 
 **RICE Score: ${rice.riceScore}** → Priority: \`${rice.priority}\`
 
@@ -249,11 +308,24 @@ ${
 ---
 
 ### 🔍 Feedback Analysis
+${
+  themes.length > 0
+    ? `
+**Themes identified:**
+${themes.map((t) => `- ${severityEmoji[t.severity] ?? "⚪"} **${t.name}** (${t.severity}): ${t.description}`).join("\n")}`
+    : ""
+}
 
-**Pain points identified:**
+**Pain points:**
 ${((analysis.painPoints as string[]) ?? []).map((p) => `- ${p}`).join("\n")}
 
 **Feature intent:** ${analysis.featureIntent}
+${
+  quickWins.length > 0
+    ? `
+**Quick wins:** ${quickWins.map((w) => `\`${w}\``).join(", ")}`
+    : ""
+}
 ${
   relatedIssues.length > 0
     ? `
@@ -269,10 +341,24 @@ ${
 
 ### 📝 User Story
 
+${story.problemStatement ? `**Problem:** ${story.problemStatement}\n` : ""}
 > ${story.userStory}
 
 **Acceptance criteria:**
 ${((story.acceptanceCriteria as string[]) ?? []).map((c, i) => `${i + 1}. ${c}`).join("\n")}
+${
+  (story.successMetrics as string[] | undefined)?.length
+    ? `
+**Success metrics:** ${(story.successMetrics as string[]).map((m) => `\`${m}\``).join(" · ")}`
+    : ""
+}
+${
+  (story.inScope as string[] | undefined)?.length
+    ? `
+**In scope:** ${(story.inScope as string[]).map((s) => `\`${s}\``).join(", ")}
+**Out of scope:** ${((story.outOfScope as string[]) ?? []).map((s) => `\`${s}\``).join(", ") || "—"}`
+    : ""
+}
 
 **Complexity estimate:** \`${story.complexity}\` — ${story.complexityRationale}`
     : ""

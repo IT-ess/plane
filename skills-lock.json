@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "feature-prioritization-assistant": {
+      "source": "pmprompt/claude-plugin-product-management",
+      "sourceType": "github",
+      "skillPath": "skills/feature-prioritization-assistant/SKILL.md",
+      "computedHash": "406856ecd9006855c0e390c8f9d2a7a92d5ad3e9297e36e92fa7a79c80149885"
+    },
+    "prd-writer": {
+      "source": "pmprompt/claude-plugin-product-management",
+      "sourceType": "github",
+      "skillPath": "skills/prd-writer/SKILL.md",
+      "computedHash": "d225ececb30fd50c74e938b387b9794c2017fa3988e76c9457a743a6ca6ceba0"
+    },
+    "user-feedback-synthesizer": {
+      "source": "pmprompt/claude-plugin-product-management",
+      "sourceType": "github",
+      "skillPath": "skills/user-feedback-synthesizer/SKILL.md",
+      "computedHash": "3cf570a8f18b39ceb1a28814430ac26fd3cb91ce82f42ca3d9e6f1ec4826e61f"
+    }
+  }
+}
