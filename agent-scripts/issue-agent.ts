@@ -27,8 +27,9 @@ const PLANE_MCP = process.env.PLANE_API_KEY
       plane: {
         type: "http" as const,
         url: "https://mcp.plane.so/http/api-key/mcp",
+        // The api-key endpoint authenticates via Bearer (verified: x-api-key → 401 needs-auth, Bearer → 200).
         headers: {
-          "x-api-key": process.env.PLANE_API_KEY,
+          Authorization: `Bearer ${process.env.PLANE_API_KEY}`,
           "x-workspace-slug": process.env.PLANE_WORKSPACE_SLUG ?? "",
         },
       },
@@ -102,14 +103,19 @@ async function preflightPlaneMcp() {
             "in dev, authenticate the `plane` MCP once so its OAuth token is cached in ~/.claude.json. " +
             `Configured servers: ${servers.map((s) => s.name).join(", ") || "(none)"}`
         );
-      if (plane.status !== "connected")
+      // "pending" is transient (still connecting when init fires); only fail on the definitive rejections.
+      if (plane.status === "needs-auth" || plane.status === "failed")
         throw new Error(
-          `Plane MCP server status is "${plane.status}" (expected "connected"). ` +
+          `Plane MCP server status is "${plane.status}". ` +
             (plane.status === "needs-auth"
-              ? "Credentials were rejected — check PLANE_API_KEY and PLANE_WORKSPACE_SLUG."
+              ? "The api-key endpoint expects `Authorization: Bearer <PLANE_API_KEY>` (not x-api-key), " +
+                "plus x-workspace-slug. Also clear a stale verdict: rm ~/.claude/mcp-needs-auth-cache.json. " +
+                "Verify: curl -sI -X POST " +
+                "https://mcp.plane.so/http/api-key/mcp -H 'Authorization: Bearer <KEY>' " +
+                "-H 'x-workspace-slug: <SLUG>' -H 'Accept: text/event-stream' -d '{}' → expect HTTP 200."
               : "Check network access to https://mcp.plane.so and the credentials.")
         );
-      console.log("  → Plane MCP connected.");
+      console.log(`  → Plane MCP status: ${plane.status}.`);
       return;
     }
   }
