@@ -523,13 +523,24 @@ function storyHtml(story: Record<string, unknown>) {
   if (!story.userStory)
     return `<p>${esc(ISSUE.body)}</p>`; // bug/question: no story → fall back to the issue body
   const criteria = (story.acceptanceCriteria as string[]) ?? [];
+  const metrics = (story.successMetrics as string[]) ?? [];
+  const inScope = (story.inScope as string[]) ?? [];
+  const outOfScope = (story.outOfScope as string[]) ?? [];
+  const li = (items: string[]) => items.map((s) => `<li>${esc(s)}</li>`).join("");
+  const scopeCell = (items: string[]) => (items.length ? `<ul>${li(items)}</ul>` : "—");
   return [
-    story.problemStatement ? `<p><strong>Problem:</strong> ${esc(story.problemStatement)}</p>` : "",
-    `<blockquote>${esc(story.userStory)}</blockquote>`,
-    criteria.length
-      ? `<p><strong>Acceptance criteria:</strong></p><ul>${criteria.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>`
+    story.problemStatement ? `<h2>Problem</h2><p>${esc(story.problemStatement)}</p>` : "",
+    `<h2>User story</h2><blockquote>${esc(story.userStory)}</blockquote>`,
+    criteria.length ? `<h2>Acceptance criteria</h2><ol>${li(criteria)}</ol>` : "",
+    metrics.length ? `<h2>Success metrics</h2><ul>${li(metrics)}</ul>` : "",
+    inScope.length || outOfScope.length
+      ? `<h2>Scope</h2><table><tr><th>In scope</th><th>Out of scope</th></tr>` +
+        `<tr><td>${scopeCell(inScope)}</td><td>${scopeCell(outOfScope)}</td></tr></table>`
       : "",
-    story.complexity ? `<p><strong>Complexity:</strong> ${esc(story.complexity)} — ${esc(story.complexityRationale)}</p>` : "",
+    story.complexity
+      ? `<h2>Complexity</h2><table><tr><th>Estimate</th><th>Rationale</th></tr>` +
+        `<tr><td>${esc(story.complexity)}</td><td>${esc(story.complexityRationale)}</td></tr></table>`
+      : "",
   ].filter(Boolean).join("");
 }
 
@@ -550,8 +561,9 @@ Do these steps in order:
 1. DEDUP GUARD — call search_work_items(query="${extId}", external_source="github", external_id="${extId}").
    If any result already links to this issue, STOP: write {"skipped": "duplicate"} to /tmp/publish.json and do nothing else.
 
-2. LABEL — call list_labels(project_id="${PLANE_PROJECT_ID}"). Find a label named exactly "${labelName}".
-   If none exists, create_label(project_id="${PLANE_PROJECT_ID}", name="${labelName}"). Keep its id.
+2. LABELS — call list_labels(project_id="${PLANE_PROJECT_ID}"). You need two labels:
+   a. One named exactly "${labelName}". If none exists, create_label(project_id="${PLANE_PROJECT_ID}", name="${labelName}"). Keep its id.
+   b. One named exactly "github-intake". If none exists, create_label(project_id="${PLANE_PROJECT_ID}", name="github-intake"). Keep its id.
 
 3. CREATE — create_work_item with:
    - project_id="${PLANE_PROJECT_ID}"
@@ -559,16 +571,18 @@ Do these steps in order:
    - description_html=<<<${storyHtml(story)}>>>
    - state="${PLANE_INTAKE_STATE}"
    - priority="${finalPriority}"
-   - labels=[<the label id from step 2>]
+   - labels=[<both label ids from step 2>]
    - external_source="github", external_id="${extId}"
    Keep the returned work item id.
 
-4. COMMENT — create_work_item_comment(project_id="${PLANE_PROJECT_ID}", work_item_id=<new id>, comment_html) with the FULL analysis below, passed verbatim as comment_html:
+4. LINK — create_work_item_link(project_id="${PLANE_PROJECT_ID}", work_item_id=<new id>, url="https://github.com/${ISSUE.repo}/issues/${ISSUE.number}").
+
+5. COMMENT — create_work_item_comment(project_id="${PLANE_PROJECT_ID}", work_item_id=<new id>, comment_html) with the FULL analysis below, passed verbatim as comment_html:
 <<<
 ${comment}
 >>>
 
-5. Write {"workItemId": "<new id>", "skipped": false} to /tmp/publish.json using python3.
+6. Write {"workItemId": "<new id>", "skipped": false} to /tmp/publish.json using python3.
 `.trim();
 }
 
