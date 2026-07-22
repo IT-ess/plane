@@ -165,20 +165,21 @@ costs more PO time than no decision at all — trust is the scarce resource.
 
 # The pipeline
 
-```mermaid {theme: 'neutral', scale: 0.72}
+```mermaid {theme: 'neutral', scale: 0.55}
 flowchart TB
   A([Issue opened]) --> B[GitHub Action → issue-agent.ts<br/>Claude Agent SDK]
-  B --> T[1 · Triage — classify + label]
-  T --> AN[2 · Analysis — pain points · dedup]
-  AN --> R[3 · RICE — score → priority]
-  R --> AL[4 · Alignment — OKR fit → modulate]
-  AL --> S[5 · User story — criteria · complexity]
-  S --> O1[[Post to GitHub — label + comment]]
-  S --> O2[[Publish to Plane — work item + story]]
-  T -. bug / question .-> R
-  S -. bug / question .-> O1
-  T -. bug .-> BF[parseBugForm · TS<br/>dropdowns → labels · sections → body]
-  BF -.-> O2
+  B --> T
+  subgraph pipe [ ]
+    direction LR
+    T[1 · Triage \n classify + label] --> AN[2 · Analysis \n pain points · dedup]
+    AN --> R[3 · RICE \n score → priority]
+    R --> AL[4 · Alignment \n OKR fit → modulate]
+    AL --> S[5 · User story \n criteria · complexity]
+    S --> O1[[Post to GitHub \n label + comment]]
+    S --> O2[[Publish to Plane \n work item + story]]
+    AL -. bug / question .-> BF[parseBugForm · TS<br/>dropdowns → labels · sections → body]
+    BF -.-> O2
+  end
 
   classDef step fill:#eef2ff,stroke:#6366f1,color:#1e1b4b;
   classDef out fill:#ecfdf5,stroke:#10b981,color:#064e3b;
@@ -186,6 +187,7 @@ flowchart TB
   class T,AN,R,AL,S step;
   class O1,O2 out;
   class BF guard;
+  style pipe fill:none,stroke:none;
 ```
 
 <!--Each numbered step is an **isolated agent run** loaded with **one skill + a minimal tool allow-list**.
@@ -226,6 +228,7 @@ Bugs & questions **skip** Analysis and Story (dotted paths); a bug's form dropdo
 - **Slack recap** -> I didn't wanted more noise
 - **Agent memory** -> there is no real need for improvement between runs
 - **GitHub issues only**
+- **Bug reproduction / PR drafts**
 
 ---
 
