@@ -1,7 +1,7 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
-import { adjustPriority } from "./priority";
+import { adjustPriority, computeRice } from "./priority";
 import { parseBugForm } from "./bug-form";
 
 const ISSUE = {
@@ -143,18 +143,14 @@ ${BODY}
       : "(GitHub labeling skipped in local test mode — do not run gh.)"
   }
 
-3. Write your result to /tmp/triage.json using Python:
-   python3 -c "
-import json
-data = {
-    'type': '<type>',
-    'confidence': 'high|medium|low',
-    'reasoning': '<one concise sentence>'
+3. Write your result to /tmp/triage.json as valid JSON (double-quoted strings, so apostrophes in text are safe). Use a quoted heredoc exactly like this, filling in real values:
+   cat > /tmp/triage.json <<'JSON'
+{
+  "type": "bug|feature-request|feedback|question|other",
+  "confidence": "high|medium|low",
+  "reasoning": "<one concise sentence>"
 }
-json.dump(data, open('/tmp/triage.json', 'w'))
-"
-
-Replace <type>, confidence, and reasoning with your actual assessment.
+JSON
 `.trim();
 }
 
@@ -178,21 +174,19 @@ ${BODY}
    - Identifying quick wins (small-effort, high-visibility improvements buried in the request)
    - Extracting the core feature intent (what job-to-be-done is the user trying to accomplish?)
 
-2. Write your analysis to /tmp/analysis.json using Python:
-   python3 -c "
-import json
-data = {
-    'painPoints': ['<specific pain point 1>', '<specific pain point 2>'],
-    'featureIntent': '<the underlying job-to-be-done the user wants to accomplish>',
-    'themes': [
-        {'name': '<theme name>', 'severity': 'critical|high|medium|low', 'description': '<one sentence>'}
-    ],
-    'quickWins': ['<small improvement that could be shipped fast>']
+2. Write your analysis to /tmp/analysis.json as valid JSON (double-quoted strings, so apostrophes in text are safe). Use a quoted heredoc exactly like this, filling in real values:
+   cat > /tmp/analysis.json <<'JSON'
+{
+  "painPoints": ["<specific pain point 1>", "<specific pain point 2>"],
+  "featureIntent": "<the underlying job-to-be-done the user wants to accomplish>",
+  "themes": [
+    {"name": "<theme name>", "severity": "critical|high|medium|low", "description": "<one sentence>"}
+  ],
+  "quickWins": ["<small improvement that could be shipped fast>"]
 }
-json.dump(data, open('/tmp/analysis.json', 'w'))
-"
+JSON
 
-quickWins may be empty if none found.
+quickWins may be an empty array if none found.
 `.trim();
 }
 
@@ -246,35 +240,22 @@ Use the standard RICE framework with these precise scales:
 - 11–20 d: medium (new feature area)
 - 21–60 d: large (cross-cutting, architectural)
 
-RICE Score = (Reach × Impact × Confidence/100) / Effort × 100  ← multiply by 100 to keep scores readable
-
-Priority thresholds (re-calibrated for this formula):
-- high   → RICE ≥ 15
-- medium → RICE 5–14
-- low    → RICE < 5
-
 Be honest about Confidence — use lower values when estimates rest on assumptions.
 Include design, development, and testing in Effort.
 
-Write to /tmp/rice.json using Python:
-python3 -c "
-import json
-reach = <1-100>        # % of users
-impact = <0.25|0.5|1|2|3>
-confidence = <10-100>  # percent
-effort = <person-days>
-rice = round((reach * impact * confidence / 100) / effort * 100, 1)
-data = {
-    'reach': reach,
-    'impact': impact,
-    'confidence': confidence,
-    'effort': effort,
-    'riceScore': rice,
-    'priority': 'high' if rice >= 15 else ('medium' if rice >= 5 else 'low'),
-    'justification': '<2-3 sentences explaining each score with specific reasoning>'
+Pick the four inputs and justify them. Do NOT compute the score — the RICE score and
+priority tier are calculated automatically in code from your four inputs.
+
+Write to /tmp/rice.json as valid JSON (double-quoted strings, so apostrophes in text are safe). Use a quoted heredoc exactly like this, filling in real values:
+cat > /tmp/rice.json <<'JSON'
+{
+  "reach": <1-100>,
+  "impact": <0.25|0.5|1|2|3>,
+  "confidence": <10-100>,
+  "effort": <person-days>,
+  "justification": "<2-3 sentences explaining each score with specific reasoning>"
 }
-json.dump(data, open('/tmp/rice.json', 'w'))
-"
+JSON
 `.trim();
 }
 
@@ -313,25 +294,19 @@ ${BODY}
 - score 0 → bump priority DOWN one tier (high→medium→low, clamped)
 - score 1 or 2 → keep the RICE priority unchanged
 
-Write to /tmp/alignment.json using Python:
-python3 -c "
-import json
-rice_priority = '${rice.priority ?? "medium"}'
-score = <0|1|2|3>
-tiers = ['low', 'medium', 'high']
-idx = tiers.index(rice_priority) if rice_priority in tiers else 1
-delta = 1 if score == 3 else (-1 if score == 0 else 0)
-adjusted = tiers[max(0, min(2, idx + delta))]
-data = {
-    'okrsServed': [<'O1'|'O2'|'O3'|'O4', ...>],
-    'alignmentScore': score,
-    'adjustedPriority': adjusted,
-    'rationale': '<one sentence: which OKRs and why this score>'
-}
-json.dump(data, open('/tmp/alignment.json', 'w'))
-"
+Give your score and which OKRs it serves. The adjusted priority is applied automatically
+in code from your score — do not compute it.
 
-okrsServed may be empty when score is 0.
+Write to /tmp/alignment.json as valid JSON (double-quoted strings, so apostrophes in text are safe). Use a quoted heredoc exactly like this, filling in real values:
+cat > /tmp/alignment.json <<'JSON'
+{
+  "okrsServed": ["O1", "O3"],
+  "alignmentScore": <0|1|2|3>,
+  "rationale": "<one sentence: which OKRs and why this score>"
+}
+JSON
+
+okrsServed may be an empty array when score is 0.
 `.trim();
 }
 
@@ -376,25 +351,23 @@ Produce a structured story following PRD best practices:
 - L  → 1–2 sprints
 - XL → multi-sprint
 
-Write to /tmp/story.json using Python:
-python3 -c "
-import json
-data = {
-    'problemStatement': '<current situation + user pain + business impact>',
-    'userStory': 'As a <persona>, I want <goal> so that <benefit>.',
-    'acceptanceCriteria': [
-        'Given <context>, when <action>, then <outcome>.',
-        '<criterion 2>',
-        '<criterion 3>'
-    ],
-    'successMetrics': ['<metric 1>', '<metric 2>'],
-    'inScope': ['<item 1>', '<item 2>'],
-    'outOfScope': ['<item 1>'],
-    'complexity': 'S|M|L|XL',
-    'complexityRationale': '<brief explanation>'
+Write to /tmp/story.json as valid JSON (double-quoted strings, so apostrophes in text are safe). Use a quoted heredoc exactly like this, filling in real values:
+cat > /tmp/story.json <<'JSON'
+{
+  "problemStatement": "<current situation + user pain + business impact>",
+  "userStory": "As a <persona>, I want <goal> so that <benefit>.",
+  "acceptanceCriteria": [
+    "Given <context>, when <action>, then <outcome>.",
+    "<criterion 2>",
+    "<criterion 3>"
+  ],
+  "successMetrics": ["<metric 1>", "<metric 2>"],
+  "inScope": ["<item 1>", "<item 2>"],
+  "outOfScope": ["<item 1>"],
+  "complexity": "S|M|L|XL",
+  "complexityRationale": "<brief explanation>"
 }
-json.dump(data, open('/tmp/story.json', 'w'))
-"
+JSON
 `.trim();
 }
 
@@ -645,18 +618,21 @@ async function main() {
     console.log(`  → pain points: ${((analysis.painPoints as string[]) ?? []).length}`);
   }
 
-  // Step 3 — RICE (always) — scores are recomputed/clamped in TS, so no thinking needed.
+  // Step 3 — RICE (always) — model picks the 4 inputs; score + tier are computed in TS.
   const riceJson = await runStep("rice", ricePrompt(triage, analysis), {
     skills: [SKILL.rice],
     model: HAIKU,
+    maxTurns: 5,
   });
   const rice = parse(riceJson);
+  Object.assign(rice, computeRice(rice)); // riceScore + priority, deterministic in TS
   console.log(`  → RICE: ${rice.riceScore} (${rice.priority})`);
 
   // Step 4 — Strategic alignment (always) — modulates the RICE priority (bump recomputed in TS).
   const alignmentJson = await runStep("alignment", alignmentPrompt(triage, analysis, rice), {
     skills: [SKILL.alignment],
     model: HAIKU,
+    maxTurns: 5,
   });
   const alignment = parse(alignmentJson);
   // Guard: recompute the tier bump from the model's score so the label can't drift from the rule.

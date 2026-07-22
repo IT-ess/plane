@@ -238,7 +238,7 @@ layout: cover
 <v-clicks>
 
 - **Model / harness agnostic**
-- **Cost per issue**
+- **Cost per issue** (~70 cts/ issue)
 - **Advanced deduplication** -> Finding existing work items through RAG and referencing issues instead of creating a new item
 - **Feedback loop** -> learn from PO edits to calibrate RICE & alignment
 - **Contributor feedback** -> add Github labels, or automated messages that tells the contributor that this is taken into account
