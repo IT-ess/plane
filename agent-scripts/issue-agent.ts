@@ -19,7 +19,8 @@ const POST_GH = process.env.SKIP_GITHUB !== "1";
 // The team's own Plane project — it dogfoods Plane to build Plane.
 // Hardcoded to the demo workspace. ponytail: re-fetch via list_projects/list_states if the workspace is recreated.
 const PLANE_PROJECT_ID = "024d5c16-fab9-4bca-b57d-72e16db1183a"; // Plane-agent-demo
-const PLANE_INTAKE_STATE = "055a5cd7-72ba-45b9-9c9e-dd577c022e8a"; // "Github intakes" state
+// Intake work items land in the project's Intake inbox, auto-assigned to the Triage
+// state — no state id needed; a human accepts/rejects them before they hit the backlog.
 // CI has no cached OAuth, so authenticate the Plane MCP with a Personal Access Token instead.
 // When PLANE_API_KEY is set (CI), use the api-key endpoint; otherwise fall back to the local OAuth cache (dev).
 const PLANE_MCP = process.env.PLANE_API_KEY
@@ -40,7 +41,8 @@ const PUBLISH_TOOLS = [
   "mcp__plane__search_work_items",
   "mcp__plane__list_labels",
   "mcp__plane__create_label",
-  "mcp__plane__create_work_item",
+  "mcp__plane__create_intake_work_item",
+  "mcp__plane__update_work_item",
   "mcp__plane__create_work_item_link",
   "mcp__plane__create_work_item_comment",
 ];
@@ -602,36 +604,37 @@ function publishPrompt(
   const extId = `${ISSUE.repo}#${ISSUE.number}`;
   const labelName = String(triage.type ?? "other");
   return `
-You are publishing this issue as a work item in the team's own Plane project (they dogfood Plane).
-Use the Plane MCP tools. Project id: ${PLANE_PROJECT_ID}. Intake state id: ${PLANE_INTAKE_STATE}.
+You are publishing this issue into the Intake inbox of the team's own Plane project (they dogfood Plane).
+An intake work item lands in the Triage state for a human to accept/reject before it becomes backlog work.
+Use the Plane MCP tools. Project id: ${PLANE_PROJECT_ID}.
 
 Do these steps in order:
 
 1. DEDUP GUARD — call search_work_items(query="${extId}", external_source="github", external_id="${extId}").
    If any result already links to this issue, STOP: write {"skipped": "duplicate"} to /tmp/publish.json and do nothing else.
 
-2. LABELS — call list_labels(project_id="${PLANE_PROJECT_ID}"). You need two labels:
-   a. One named exactly "${labelName}". If none exists, create_label(project_id="${PLANE_PROJECT_ID}", name="${labelName}"). Keep its id.
-   b. One named exactly "github-intake". If none exists, create_label(project_id="${PLANE_PROJECT_ID}", name="github-intake"). Keep its id.
+2. LABELS — call list_labels(project_id="${PLANE_PROJECT_ID}"). You need one label, named exactly "${labelName}".
+If none exists, create_label(project_id="${PLANE_PROJECT_ID}", name="${labelName}"). Keep its id.
 
-3. CREATE — create_work_item with:
+3. CREATE (intake) — create_intake_work_item with:
    - project_id="${PLANE_PROJECT_ID}"
-   - name="#${ISSUE.number} ${String(ISSUE.title).replace(/"/g, "'")}"
-   - description_html=<<<${storyHtml(story)}>>>
-   - state="${PLANE_INTAKE_STATE}"
-   - priority="${finalPriority}"
-   - labels=[<both label ids from step 2>]
-   - external_source="github", external_id="${extId}"
-   Keep the returned work item id.
+   - data={"issue": {"name": "#${ISSUE.number} ${String(ISSUE.title).replace(/"/g, "'")}", "description_html": <<<${storyHtml(story)}>>>, "priority": "${finalPriority}"}}
+   The response is an intake work item. Take the underlying work item id from its "issue" field
+   (same value as issue_detail.id). Use THAT id — not the intake id — for every step below.
 
-4. LINK — create_work_item_link(project_id="${PLANE_PROJECT_ID}", work_item_id=<new id>, url="https://github.com/${ISSUE.repo}/issues/${ISSUE.number}").
+4. BACKFILL — the intake create can't set labels or external ids, so do it in one update_work_item call:
+   update_work_item(project_id="${PLANE_PROJECT_ID}", work_item_id=<id from step 3>,
+     labels=[<label id from step 2>], external_source="github", external_id="${extId}").
+   Do NOT set state — leave it in Triage so it stays in the inbox.
 
-5. COMMENT — create_work_item_comment(project_id="${PLANE_PROJECT_ID}", work_item_id=<new id>, comment_html) with the FULL analysis below, passed verbatim as comment_html:
+5. LINK — create_work_item_link(project_id="${PLANE_PROJECT_ID}", work_item_id=<id>, url="https://github.com/${ISSUE.repo}/issues/${ISSUE.number}").
+
+6. COMMENT — create_work_item_comment(project_id="${PLANE_PROJECT_ID}", work_item_id=<id>, comment_html) with the FULL analysis below, passed verbatim as comment_html:
 <<<
 ${comment}
 >>>
 
-6. Write {"workItemId": "<new id>", "skipped": false} to /tmp/publish.json using python3.
+7. Write {"workItemId": "<id>", "skipped": false} to /tmp/publish.json using python3.
 `.trim();
 }
 
@@ -707,7 +710,7 @@ async function main() {
   console.log(
     publish.skipped
       ? `  → Plane: skipped (${publish.skipped})`
-      : `✅ Plane work item created: ${publish.workItemId}`
+      : `✅ Plane intake work item created: ${publish.workItemId}`
   );
 }
 
