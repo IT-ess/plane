@@ -207,26 +207,35 @@ Bugs & questions **skip** Analysis and Story (dotted paths); a bug's form dropdo
 <br/>
 
 - **One skill per step, minimal tools** => Focused context, cheaper runs, no cross-talk
+- Dedicated skill for Product Strategy created from the project context
 - Integrated with the user's previous tools & interfaces
 
 ---
-
-## layout: section
-
+layout: section
+---
 # Areas for improvement
 
 ---
+layout: cover
+---
 
 # What I deliberately left out
+
+<v-clicks>
 
 - **Slack recap** -> I didn't wanted more noise
 - **Agent memory** -> there is no real need for improvement between runs
 - **GitHub issues only**
 - **Bug reproduction / PR drafts**
 
----
+</v-clicks>
 
+---
+layout: cover
+---
 # What to improve
+
+<v-clicks>
 
 - **Model / harness agnostic**
 - **Cost per issue**
@@ -234,9 +243,11 @@ Bugs & questions **skip** Analysis and Story (dotted paths); a bug's form dropdo
 - **Feedback loop** -> learn from PO edits to calibrate RICE & alignment
 - **Contributor feedback** -> add Github labels, or automated messages that tells the contributor that this is taken into account
 
----
+</v-clicks>
 
-## layout: section
+---
+layout: section
+---
 
 # Questions ?
 
