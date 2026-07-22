@@ -40,6 +40,7 @@ const PUBLISH_TOOLS = [
   "mcp__plane__list_labels",
   "mcp__plane__create_label",
   "mcp__plane__create_work_item",
+  "mcp__plane__create_work_item_link",
   "mcp__plane__create_work_item_comment",
 ];
 // Each step only gets the one skill it needs (used both for loading and the fail-fast guard).
@@ -71,6 +72,48 @@ async function runStep(name: string, prompt: string, skills: string[] = [], allo
   }
   const file = `/tmp/${name}.json`;
   return existsSync(file) ? readFileSync(file, "utf-8") : "{}";
+}
+
+// Fail fast if the Plane MCP can't connect — otherwise every publish tool call silently
+// no-ops, /tmp/publish.json is never written, and the run "succeeds" with an undefined id.
+async function preflightPlaneMcp() {
+  if (process.env.PLANE_API_KEY && !process.env.PLANE_WORKSPACE_SLUG)
+    throw new Error(
+      "PLANE_API_KEY is set but PLANE_WORKSPACE_SLUG is empty — the MCP api-key endpoint " +
+        "requires the workspace slug. Set PLANE_WORKSPACE_SLUG in the workflow env."
+    );
+
+  console.log("\nPreflight: verifying Plane MCP connection…");
+  for await (const msg of query({
+    prompt: "Reply with OK.",
+    options: {
+      allowedTools: [],
+      cwd: REPO_ROOT,
+      settingSources: ["project", "local"],
+      ...(PLANE_MCP ? { mcpServers: PLANE_MCP } : {}),
+    },
+  })) {
+    if (msg.type === "system" && (msg as any).subtype === "init") {
+      const servers = (msg as any).mcp_servers as { name: string; status: string }[];
+      const plane = servers.find((s) => s.name === "plane");
+      if (!plane)
+        throw new Error(
+          "Plane MCP server is not configured. In CI, set PLANE_API_KEY (+ PLANE_WORKSPACE_SLUG); " +
+            "in dev, authenticate the `plane` MCP once so its OAuth token is cached in ~/.claude.json. " +
+            `Configured servers: ${servers.map((s) => s.name).join(", ") || "(none)"}`
+        );
+      if (plane.status !== "connected")
+        throw new Error(
+          `Plane MCP server status is "${plane.status}" (expected "connected"). ` +
+            (plane.status === "needs-auth"
+              ? "Credentials were rejected — check PLANE_API_KEY and PLANE_WORKSPACE_SLUG."
+              : "Check network access to https://mcp.plane.so and the credentials.")
+        );
+      console.log("  → Plane MCP connected.");
+      return;
+    }
+  }
+  throw new Error("Preflight ended without an init message — the agent SDK failed to start.");
 }
 
 function parse<T = Record<string, unknown>>(json: string): T {
@@ -598,6 +641,9 @@ async function main() {
       throw new Error(`Skill "${s}" not found under .claude/skills/ — check the name`);
   }
 
+  // Fail fast if Plane MCP is unreachable, before spending 6 steps of work on a run that can't publish.
+  await preflightPlaneMcp();
+
   // Step 1 — Triage (always)
   const triageJson = await runStep("triage", triagePrompt());
   const triage = parse(triageJson);
@@ -647,6 +693,11 @@ async function main() {
   // Step 7 — Publish as a work item in the team's Plane project (always)
   const publishJson = await runStep("publish", publishPrompt(triage, story, finalPriority, comment), [], PUBLISH_TOOLS);
   const publish = parse(publishJson);
+  if (!publish.skipped && !publish.workItemId)
+    throw new Error(
+      "Publish step produced no workItemId — /tmp/publish.json was not written or is empty. " +
+        "A Plane MCP call likely failed mid-run; see the [PUBLISH] output above for the failing tool."
+    );
   console.log(
     publish.skipped
       ? `  → Plane: skipped (${publish.skipped})`
