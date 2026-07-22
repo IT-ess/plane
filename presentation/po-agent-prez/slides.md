@@ -9,71 +9,111 @@ transition: slide-left
 mdc: true
 ---
 
-# PO Assistant
+# Plane's PO Assistant
 
-### An AI agent that pre-qualifies issues for the Product Owner
-
-From a raw GitHub issue → a triaged, RICE-scored, strategy-aligned
-work item in **Plane**, with a ready-to-use user story.
+## A technical usecase of using an agent to unclutter the feedback pipe of an open-core product
 
 <div class="pt-8 opacity-70 text-sm">
-<!-- TODO: author name · role applied for · date -->
-Technical test — AI assistant for a Product Owner
+Alexis Loiseau
 </div>
 
-<!--
-15-min slot. This deck is the 3-4 min "architecture & choices" backbone;
-the live demo carries the rest.
--->
-
----
-layout: section
 ---
 
-# 1 · The problem
+## layout: section
 
-Where a Product Owner bleeds time — and how not to make it worse
+# Product context
+
+**Plane**, an open-source alternative to Jira and Linear
+
+---
+
+layout: image-right
+image: https://plane.so/_next/image?url=%2Fhome%2Fv4%2Fhero%2Fhero-desktop.webp&w=1920&q=75&dpl=dpl_BgEGqoNR9BiAD8c7AZhRK6Jq7PdW
+backgroundSize: contain
+
+---
+
+# What is Plane?
+
+### **Plane** is an open-source project & product management platform
+
+Like its Jira or Linear competitors, it features:
+
+- Work items (US, Epics...)
+- Documentation / Wiki platform
+- Workflows and integrations
+
+---
+
+layout: image-right
+image: /plane-github.png
+backgroundSize: contain
+
+---
+
+# An open-core SaaS
+
+Open-core: when the core of a product is open-source
+
+The team receives a ton of feedback from users, mostly in the form of Github issues.
+
+- Some are bug reports, some are feature requests
+- Most of them are structured with Github's issue template
+- They use their own software to manage its development (dogfooding)
+
+---
+
+## layout: section
+
+# Problem identification
 
 ---
 
 # The PO is drowning in inbound
 
-<div grid="~ cols-2 gap-8" class="pt-4">
+<v-clicks>
+
+- Every new Github issue implies a lot of work by hand
+  - reading the issue, classify it (bug, feature, opportunity...), checking for duplicates
+  - write complete user stories aligned with strategy
+  - decide a priority, plan it
+- The PO already has a lot of intakes to read, from different sources
+  - they **won't** read yet another lengthy report
+  - they already uses the "Intake" feature of Plane
+  - they still want **control** on the backlog content
+- That triage time is time _not_ spent on strategy, discovery,
+  and talking to users.
+
+</v-clicks>
+
+<!--<div grid="~ cols-2 gap-8" class="pt-4">
 
 <div>
 
 Every new issue, email, or feedback ticket forces the PO to, by hand:
 
-- **Read & classify** — bug? feature? question? noise?
-- **Check for duplicates** across the whole backlog
-- **Guess a priority** — often gut-feel, rarely comparable
-- **Re-write** a vague request into an actionable story
-- **Re-decide** priorities every single day
+- **Read & classify**
+- **Check for duplicates**
+- **Guess a priority**
+- **Re-write**
+- **Re-decide**
 
 </div>
 
-<div class="opacity-90">
+<div v-click class="opacity-90">
 
-The cost isn't any single issue — it's the **repetition**.
-
-The same 15-minute ritual, dozens of times a week, on input of
-wildly uneven quality.
+In contexts where incoming user feedback volumes are huge (i.e. open source projects), this can take **few hours a week**.
 
 That triage time is time *not* spent on strategy, discovery,
 and talking to users.
 
 </div>
 
-</div>
+</div>-->
 
-<!--
-Straight from the case brief: PO overwhelmed with feedback, feature
-requests, and constant re-prioritization.
--->
+<!-----
 
----
-
-# Gain time — without losing it elsewhere
+# Gain time, not just more reports to read
 
 <div grid="~ cols-2 gap-6" class="pt-2">
 
@@ -83,29 +123,26 @@ requests, and constant re-prioritization.
 
 - Classify + label on arrival
 - Detect likely duplicates
-- Draft a **first-pass** RICE score
+- Draft a first-pass RICE score
 - Scaffold the user story & acceptance criteria
-- Land it in the backlog, ready to review
+- Land it in the team's project management tool, ready to review
 
-<div class="text-sm opacity-70 pt-2">
-The agent does the boring 80%. The PO edits, not authors.
-</div>
 
 </div>
 
-<div>
+<div v-click>
 
-### ⛔ What *not* to do <span class="text-xs opacity-60">(assumption)</span>
+### ⛔ What not to do
 
-- **Don't let the agent decide** — it *proposes*, the PO disposes
-- **No black-box scores** — every number is justified & inspectable
-- **Don't auto-close / auto-reject** issues
-- **Don't over-automate** low-confidence cases into false certainty
-- **Don't add a new tool to babysit** — meet the PO where work already lands
-
-</div>
+- **Don't add a new tool to babysit** => meet the PO where work already lands
+- **Avoid lenghty, full of slop reports** => the PO already has a lot to read
+- **Don't auto-close issues** => keep the workflow safe and let the final word to the PO
+- **Don't auto-push new work items** => we want to help the PO unclutter the pipe, not filling it with more items
+- **No black-box scores** => every number is justified & inspectable
 
 </div>
+
+</div>-->
 
 <!--
 The design north star: assist, don't replace. A wrong autonomous decision
@@ -113,58 +150,16 @@ costs more PO time than no decision at all — trust is the scarce resource.
 -->
 
 ---
-layout: section
----
 
-# 2 · Product context
+## layout: section
 
-Why the output lands in **Plane**
+# Demo Time !
 
 ---
 
-# What is Plane?
+## layout: section
 
-<div grid="~ cols-2 gap-8" class="pt-4">
-
-<div>
-
-**Plane** is an open-source project & product management platform —
-an alternative to Jira / Linear.
-
-Its core objects are exactly what a PO works in:
-
-- **Work items** (issues / stories / epics)
-- **States**, **labels**, **priorities**
-- **Intake** — a triage inbox for incoming items
-- **Cycles**, modules, initiatives
-
-</div>
-
-<div>
-
-### Why it fits this test
-
-- A **real PM data model** to write into — not a toy sink <span class="text-xs opacity-60">(assumption)</span>
-- A first-class **MCP server** → the agent creates work items with tools, not brittle REST glue
-- An **intake state** purpose-built to receive machine-triaged items for human review
-- **Open source** → the whole workflow lives *in the repo* I forked, and the team can dogfood it
-
-</div>
-
-</div>
-
-<!--
-Plane isn't incidental: its MCP server + intake state are the two features
-that make "agent → reviewable backlog item" clean instead of hacky.
--->
-
----
-layout: section
----
-
-# 3 · Solution architecture
-
-One issue in → a reviewable work item out
+# Solution architecture
 
 ---
 
@@ -172,7 +167,7 @@ One issue in → a reviewable work item out
 
 ```mermaid {theme: 'neutral', scale: 0.72}
 flowchart TB
-  A([Issue opened]) --> B[GitHub Action → issue-agent.ts<br/>Claude Agent SDK · preflight: Plane MCP up?]
+  A([Issue opened]) --> B[GitHub Action → issue-agent.ts<br/>Claude Agent SDK]
   B --> T[1 · Triage — classify + label]
   T --> AN[2 · Analysis — pain points · dedup]
   AN --> R[3 · RICE — score → priority]
@@ -182,24 +177,19 @@ flowchart TB
   S --> O2[[Publish to Plane — work item + story]]
   T -. bug / question .-> R
   S -. bug / question .-> O1
+  T -. bug .-> BF[parseBugForm · TS<br/>dropdowns → labels · sections → body]
+  BF -.-> O2
 
   classDef step fill:#eef2ff,stroke:#6366f1,color:#1e1b4b;
   classDef out fill:#ecfdf5,stroke:#10b981,color:#064e3b;
+  classDef guard fill:#fef3c7,stroke:#f59e0b,color:#78350f;
   class T,AN,R,AL,S step;
   class O1,O2 out;
+  class BF guard;
 ```
 
-<div class="text-sm opacity-80 pt-1">
-
-Each numbered step is an **isolated agent run** loaded with **one skill + a minimal tool allow-list**.
-Bugs & questions **skip** Analysis and Story (dotted paths). Steps hand off via `/tmp/<step>.json`.
-
-</div>
-
-<!--
-Walk it: trigger → orchestrator → fail-fast preflight → 6 skill-scoped steps
-→ two sinks. The conditional skips keep cheap issues cheap.
--->
+<!--Each numbered step is an **isolated agent run** loaded with **one skill + a minimal tool allow-list**.
+Bugs & questions **skip** Analysis and Story (dotted paths); a bug's form dropdowns are lifted into **Plane labels** and its prose into a titled body — **deterministically in TS**, like `adjustPriority`. Steps hand off via `/tmp/<step>.json`.-->
 
 ---
 
@@ -207,123 +197,52 @@ Walk it: trigger → orchestrator → fail-fast preflight → 6 skill-scoped ste
 
 <div class="text-sm">
 
-| # | Step | Skill | Always? | Produces |
-|---|------|-------|---------|----------|
-| 1 | **Triage** | — | ✅ | type + confidence, applies GitHub label |
-| 2 | **Analysis** | `user-feedback-synthesizer` | feature/feedback | pain points, themes, duplicates |
-| 3 | **RICE** | `feature-prioritization-assistant` | ✅ | Reach×Impact×Conf/Effort → priority |
-| 4 | **Alignment** | `plane-product-strategy` | ✅ | OKR fit 0–3 → modulates priority |
-| 5 | **User story** | `prd-writer` | feature/feedback | story + acceptance criteria + complexity |
-| 6 | **Publish** | Plane MCP | ✅ | work item, labels, link, analysis comment |
+| #   | Step           | Skill                                   | Always?          | Produces                                  |
+| --- | -------------- | --------------------------------------- | ---------------- | ----------------------------------------- |
+| 1   | **Triage**     | —                                       | ✅               | type + confidence, applies GitHub label   |
+| 2   | **Analysis**   | `user-feedback-synthesizer`             | feature/feedback | pain points, themes, duplicates           |
+| 3   | **RICE**       | `feature-prioritization-assistant`      | ✅               | Reach×Impact×Conf/Effort → priority       |
+| 4   | **Alignment**  | `plane-product-strategy` (custom skill) | ✅               | OKR fit 0–3 → modulates priority          |
+| 5   | **User story** | `prd-writer`                            | feature/feedback | story + acceptance criteria + complexity  |
+| 6   | **Publish**    | Plane MCP                               | ✅               | work item, labels, link, analysis comment |
 
 </div>
 
-<div class="pt-3 opacity-90">
+<br/>
 
-The agent covers all three brief pillars — **feedback analysis**, **prioritization** (RICE + strategy),
-and **assisted writing** — as separate, composable steps.
-
-</div>
-
-<!--
-Map back to the brief's three feature categories explicitly.
--->
+- **One skill per step, minimal tools** => Focused context, cheaper runs, no cross-talk
+- Integrated with the user's previous tools & interfaces
 
 ---
 
-# Design choices that matter
+## layout: section
 
-<div grid="~ cols-2 gap-6" class="pt-2 text-sm">
-
-<div>
-
-**One skill per step, minimal tools**
-Focused context, cheaper runs, no cross-talk — a step can't misuse a tool it was never given.
-
-**File-based hand-off**
-Isolated runs communicate through `/tmp/*.json` — each step is independently testable and replayable.
-
-**Determinism guard**
-The priority tier bump is **recomputed in TypeScript** (`adjustPriority`), never trusted from the LLM — the rule can't drift.
-
-</div>
-
-<div>
-
-**Idempotent publish**
-Dedup guard on `external_source / external_id` → re-running the workflow never creates duplicate work items.
-
-**Fail-fast preflight**
-Verifies the Plane MCP connects *before* spending 6 steps — no silent "success" with no output.
-
-**Dogfooding**
-Items are published into Plane's **own** Plane project — the team manages Plane with the agent.
-
-</div>
-
-</div>
-
-<!--
-These are the "engineering judgment" points — LLM where it adds value,
-plain code where correctness must be guaranteed.
--->
-
----
-layout: section
----
-
-# 4 · Areas for improvement
-
-Conscious scope for a demo — and where it goes next
+# Areas for improvement
 
 ---
 
 # What I deliberately left out
 
-<div grid="~ cols-2 gap-6" class="pt-2 text-sm">
-
-<div>
-
-### Cut for the demo <span class="text-xs opacity-60">(assumption)</span>
-
-- **Hardcoded** Plane project & intake-state IDs → would come from config / workspace lookup
-- **Illustrative OKRs** in the alignment prompt → should be sourced from real product strategy
-- **GitHub issues only** — no email / support-ticket / call-notes ingestion yet
-- **One issue at a time** (`issues: opened`) — no backlog re-scoring or batch runs
-
-</div>
-
-<div>
-
-### Natural next steps
-
-- **Human-in-the-loop gate** — a review/approve step before priority is committed
-- **Feedback loop** — learn from PO edits to calibrate RICE & alignment
-- **Comparative prioritization** — score the *whole* backlog together, not per-issue in isolation
-- **Eval harness** — regression tests on a labeled issue set (beyond `test-local.ts`)
-- **Cost/latency budget** per issue
-
-</div>
-
-</div>
-
-<!--
-Frame these as choices, not gaps: each has a clear upgrade path. Shows I
-know where the edges are.
--->
+- **Slack recap** -> I didn't wanted more noise
+- **Agent memory** -> there is no real need for improvement between runs
+- **GitHub issues only**
 
 ---
-layout: center
-class: text-center
+
+# What to improve
+
+- **Model / harness agnostic**
+- **Cost per issue**
+- **Advanced deduplication** -> Finding existing work items through RAG and referencing issues instead of creating a new item
+- **Feedback loop** -> learn from PO edits to calibrate RICE & alignment
+- **Contributor feedback** -> add Github labels, or automated messages that tells the contributor that this is taken into account
+
 ---
 
-# Recap
+## layout: section
 
-**GitHub issue → agent pipeline → reviewable Plane work item**
+# Questions ?
 
-Assist, don't replace · every number justified · human keeps the call
-
-<div class="pt-8 text-sm opacity-70">
-<!-- TODO: repo link · Plane workspace link · demo issue link -->
-Code: <code>agent-scripts/issue-agent.ts</code> · Workflow: <code>.github/workflows/issue-agent.yml</code>
-</div>
+The repo is on Github <code>IT-ess/plane</code>.
+<br/>Agent's Code: <code>agent-scripts/issue-agent.ts</code>
+<br/> Workflow: <code>.github/workflows/issue-agent.yml</code>
