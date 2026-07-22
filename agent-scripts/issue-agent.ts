@@ -2,6 +2,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import { adjustPriority } from "./priority";
+import { parseBugForm } from "./bug-form";
 
 const ISSUE = {
   number: process.env.ISSUE_NUMBER!,
@@ -567,10 +568,20 @@ You are posting an automated analysis comment on a GitHub issue for Plane.
 `.trim();
 }
 
+const esc = (s: unknown) =>
+  String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+// Bug work-item body: render each parsed form section under its title.
+// ponytail: no full markdown rendering — same fidelity ceiling storyHtml's raw
+// fallback already has (escaped text), just sectioned with line breaks kept.
+function bugHtml(sections: { title: string; body: string }[]) {
+  return sections
+    .map((s) => `<h2>${esc(s.title)}</h2><p>${esc(s.body).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
 // Minimal HTML for the work-item description — Plane renders HTML, not markdown.
 function storyHtml(story: Record<string, unknown>) {
-  const esc = (s: unknown) =>
-    String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   if (!story.userStory)
     return `<p>${esc(ISSUE.body)}</p>`; // bug/question: no story → fall back to the issue body
   const criteria = (story.acceptanceCriteria as string[]) ?? [];
@@ -596,13 +607,12 @@ function storyHtml(story: Record<string, unknown>) {
 }
 
 function publishPrompt(
-  triage: Record<string, unknown>,
-  story: Record<string, unknown>,
+  labels: string[],
+  descriptionHtml: string,
   finalPriority: string,
   comment: string
 ) {
   const extId = `${ISSUE.repo}#${ISSUE.number}`;
-  const labelName = String(triage.type ?? "other");
   return `
 You are publishing this issue into the Intake inbox of the team's own Plane project (they dogfood Plane).
 An intake work item lands in the Triage state for a human to accept/reject before it becomes backlog work.
@@ -613,18 +623,18 @@ Do these steps in order:
 1. DEDUP GUARD — call search_work_items(query="${extId}", external_source="github", external_id="${extId}").
    If any result already links to this issue, STOP: write {"skipped": "duplicate"} to /tmp/publish.json and do nothing else.
 
-2. LABELS — call list_labels(project_id="${PLANE_PROJECT_ID}"). You need one label, named exactly "${labelName}".
-If none exists, create_label(project_id="${PLANE_PROJECT_ID}", name="${labelName}"). Keep its id.
+2. LABELS — call list_labels(project_id="${PLANE_PROJECT_ID}"). You need these labels, named exactly: ${JSON.stringify(labels)}.
+For each one that does not already exist, create_label(project_id="${PLANE_PROJECT_ID}", name=<the label>). Collect the ids of ALL of them.
 
 3. CREATE (intake) — create_intake_work_item with:
    - project_id="${PLANE_PROJECT_ID}"
-   - data={"issue": {"name": "#${ISSUE.number} ${String(ISSUE.title).replace(/"/g, "'")}", "description_html": <<<${storyHtml(story)}>>>, "priority": "${finalPriority}"}}
+   - data={"issue": {"name": "#${ISSUE.number} ${String(ISSUE.title).replace(/"/g, "'")}", "description_html": <<<${descriptionHtml}>>>, "priority": "${finalPriority}"}}
    The response is an intake work item. Take the underlying work item id from its "issue" field
    (same value as issue_detail.id). Use THAT id — not the intake id — for every step below.
 
 4. BACKFILL — the intake create can't set labels or external ids, so do it in one update_work_item call:
    update_work_item(project_id="${PLANE_PROJECT_ID}", work_item_id=<id from step 3>,
-     labels=[<label id from step 2>], external_source="github", external_id="${extId}").
+     labels=[<ALL label ids from step 2>], external_source="github", external_id="${extId}").
    Do NOT set state — leave it in Triage so it stays in the inbox.
 
 5. LINK — create_work_item_link(project_id="${PLANE_PROJECT_ID}", work_item_id=<id>, url="https://github.com/${ISSUE.repo}/issues/${ISSUE.number}").
@@ -691,6 +701,11 @@ async function main() {
   const finalPriority = alignment.adjustedPriority as string; // recomputed above from the alignment score
   const comment = buildComment(triage, analysis, rice, alignment, story, finalPriority);
 
+  // Bugs come from a structured issue form: lift dropdowns → labels, prose → titled body (deterministic, in TS).
+  const bugForm = triage.type === "bug" ? parseBugForm(ISSUE.body) : { labels: [], sections: [] };
+  const labels = [String(triage.type ?? "other"), ...bugForm.labels];
+  const descriptionHtml = bugForm.sections.length ? bugHtml(bugForm.sections) : storyHtml(story);
+
   // Step 6 — Post comment + priority label to GitHub (skipped in local test mode)
   if (POST_GH) {
     await runStep("post", postPrompt(finalPriority, comment));
@@ -700,7 +715,7 @@ async function main() {
   }
 
   // Step 7 — Publish as a work item in the team's Plane project (always)
-  const publishJson = await runStep("publish", publishPrompt(triage, story, finalPriority, comment), [], PUBLISH_TOOLS);
+  const publishJson = await runStep("publish", publishPrompt(labels, descriptionHtml, finalPriority, comment), [], PUBLISH_TOOLS);
   const publish = parse(publishJson);
   if (!publish.skipped && !publish.workItemId)
     throw new Error(
