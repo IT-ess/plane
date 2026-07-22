@@ -18,19 +18,17 @@ Alexis Loiseau
 </div>
 
 ---
-
-## layout: section
+layout: section
+---
 
 # Product context
 
 **Plane**, an open-source alternative to Jira and Linear
 
 ---
-
 layout: image-right
 image: https://plane.so/_next/image?url=%2Fhome%2Fv4%2Fhero%2Fhero-desktop.webp&w=1920&q=75&dpl=dpl_BgEGqoNR9BiAD8c7AZhRK6Jq7PdW
 backgroundSize: contain
-
 ---
 
 # What is Plane?
@@ -44,11 +42,9 @@ Like its Jira or Linear competitors, it features:
 - Workflows and integrations
 
 ---
-
 layout: image-right
 image: /plane-github.png
 backgroundSize: contain
-
 ---
 
 # An open-core SaaS
@@ -62,8 +58,8 @@ The team receives a ton of feedback from users, mostly in the form of Github iss
 - They use their own software to manage its development (dogfooding)
 
 ---
-
-## layout: section
+layout: section
+---
 
 # Problem identification
 
@@ -150,15 +146,13 @@ costs more PO time than no decision at all — trust is the scarce resource.
 -->
 
 ---
-
-## layout: section
-
+layout: section
+---
 # Demo Time !
 
 ---
-
-## layout: section
-
+layout: section
+---
 # Solution architecture
 
 ---
