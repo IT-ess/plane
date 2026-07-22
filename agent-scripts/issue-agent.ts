@@ -55,7 +55,12 @@ const SKILL = {
   story: "prd-writer",
 } as const;
 
-async function runStep(name: string, prompt: string, skills: string[] = [], allowedTools: string[] = ["Bash"]): Promise<string> {
+async function runStep(
+  name: string,
+  prompt: string,
+  skills: string[] = [],
+  allowedTools: string[] = ["Bash"]
+): Promise<string> {
   console.log(`\n${"─".repeat(60)}\n[${name.toUpperCase()}]\n${"─".repeat(60)}`);
   for await (const msg of query({
     prompt,
@@ -156,8 +161,12 @@ ${ISSUE.body}
    - question      (asking how something works)
    - other         (doesn't fit above)
 
-2. ${POST_GH ? `Apply the matching label:
-   gh issue edit ${ISSUE.number} --repo ${ISSUE.repo} --add-label "<type>"` : "(GitHub labeling skipped in local test mode — do not run gh.)"}
+2. ${
+    POST_GH
+      ? `Apply the matching label:
+   gh issue edit ${ISSUE.number} --repo ${ISSUE.repo} --add-label "<type>"`
+      : "(GitHub labeling skipped in local test mode — do not run gh.)"
+  }
 
 3. Write your result to /tmp/triage.json using Python:
    python3 -c "
@@ -188,16 +197,13 @@ ${ISSUE.body}
 
 ## Your tasks
 
-1. Search for related/duplicate issues (run 2-3 targeted searches):
-   gh issue list --repo ${ISSUE.repo} --state all --search "<keywords>" --json number,title --limit 5
-
-2. Synthesize the feedback by:
+1. Synthesize the feedback by:
    - Clustering signals into themes (what category of problem does each pain point belong to?)
    - Assessing severity per theme: critical (blocks work) / high (major friction) / medium (notable inconvenience) / low (nice-to-have)
    - Identifying quick wins (small-effort, high-visibility improvements buried in the request)
    - Extracting the core feature intent (what job-to-be-done is the user trying to accomplish?)
 
-3. Write your analysis to /tmp/analysis.json using Python:
+2. Write your analysis to /tmp/analysis.json using Python:
    python3 -c "
 import json
 data = {
@@ -206,20 +212,16 @@ data = {
     'themes': [
         {'name': '<theme name>', 'severity': 'critical|high|medium|low', 'description': '<one sentence>'}
     ],
-    'quickWins': ['<small improvement that could be shipped fast>'],
-    'relatedIssues': [{'number': N, 'title': '...'}]
+    'quickWins': ['<small improvement that could be shipped fast>']
 }
 json.dump(data, open('/tmp/analysis.json', 'w'))
 "
 
-relatedIssues may be empty. quickWins may be empty if none found.
+quickWins may be empty if none found.
 `.trim();
 }
 
-function ricePrompt(
-  triage: Record<string, unknown>,
-  analysis: Record<string, unknown>
-) {
+function ricePrompt(triage: Record<string, unknown>, analysis: Record<string, unknown>) {
   const hasAnalysis = Object.keys(analysis).length > 0;
   return `
 You are a senior product manager for Plane, a project management platform used by software teams.
@@ -234,8 +236,7 @@ ${
   hasAnalysis
     ? `## Feedback analysis
 Pain points: ${JSON.stringify(analysis.painPoints ?? [])}
-Feature intent: ${analysis.featureIntent ?? "N/A"}
-Related issues found: ${((analysis.relatedIssues as unknown[]) ?? []).length}`
+Feature intent: ${analysis.featureIntent ?? "N/A"}`
     : ""
 }
 
@@ -434,7 +435,6 @@ function buildComment(
   const okrsServed = (alignment.okrsServed as string[]) ?? [];
   const hasStory = !!story.userStory;
   const hasAnalysis = !!(analysis.painPoints as unknown[])?.length;
-  const relatedIssues = (analysis.relatedIssues as Array<{ number: number; title: string }>) ?? [];
   const themes = (analysis.themes as Array<{ name: string; severity: string; description: string }>) ?? [];
   const quickWins = (analysis.quickWins as string[]) ?? [];
 
@@ -504,12 +504,6 @@ ${
     ? `
 **Quick wins:** ${quickWins.map((w) => `\`${w}\``).join(", ")}`
     : ""
-}
-${
-  relatedIssues.length > 0
-    ? `
-**Related issues:** ${relatedIssues.map((i) => `#${i.number} — ${i.title}`).join(", ")}`
-    : ""
 }`
     : ""
 }
@@ -569,21 +563,21 @@ You are posting an automated analysis comment on a GitHub issue for Plane.
 }
 
 const esc = (s: unknown) =>
-  String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 
 // Bug work-item body: render each parsed form section under its title.
 // ponytail: no full markdown rendering — same fidelity ceiling storyHtml's raw
 // fallback already has (escaped text), just sectioned with line breaks kept.
 function bugHtml(sections: { title: string; body: string }[]) {
-  return sections
-    .map((s) => `<h2>${esc(s.title)}</h2><p>${esc(s.body).replace(/\n/g, "<br>")}</p>`)
-    .join("");
+  return sections.map((s) => `<h2>${esc(s.title)}</h2><p>${esc(s.body).replace(/\n/g, "<br>")}</p>`).join("");
 }
 
 // Minimal HTML for the work-item description — Plane renders HTML, not markdown.
 function storyHtml(story: Record<string, unknown>) {
-  if (!story.userStory)
-    return `<p>${esc(ISSUE.body)}</p>`; // bug/question: no story → fall back to the issue body
+  if (!story.userStory) return `<p>${esc(ISSUE.body)}</p>`; // bug/question: no story → fall back to the issue body
   const criteria = (story.acceptanceCriteria as string[]) ?? [];
   const metrics = (story.successMetrics as string[]) ?? [];
   const inScope = (story.inScope as string[]) ?? [];
@@ -603,15 +597,12 @@ function storyHtml(story: Record<string, unknown>) {
       ? `<h2>Complexity</h2><table><tr><th>Estimate</th><th>Rationale</th></tr>` +
         `<tr><td>${esc(story.complexity)}</td><td>${esc(story.complexityRationale)}</td></tr></table>`
       : "",
-  ].filter(Boolean).join("");
+  ]
+    .filter(Boolean)
+    .join("");
 }
 
-function publishPrompt(
-  labels: string[],
-  descriptionHtml: string,
-  finalPriority: string,
-  comment: string
-) {
+function publishPrompt(labels: string[], descriptionHtml: string, finalPriority: string, comment: string) {
   const extId = `${ISSUE.repo}#${ISSUE.number}`;
   return `
 You are publishing this issue into the Intake inbox of the team's own Plane project (they dogfood Plane).
@@ -675,7 +666,7 @@ async function main() {
   if (!isBugOrQuestion) {
     const analysisJson = await runStep("analysis", analysisPrompt(triage), [SKILL.analysis]);
     analysis = parse(analysisJson);
-    console.log(`  → pain points: ${((analysis.painPoints as string[]) ?? []).length}, related: ${((analysis.relatedIssues as unknown[]) ?? []).length}`);
+    console.log(`  → pain points: ${((analysis.painPoints as string[]) ?? []).length}`);
   }
 
   // Step 3 — RICE (always)
@@ -688,7 +679,9 @@ async function main() {
   const alignment = parse(alignmentJson);
   // Guard: recompute the tier bump from the model's score so the label can't drift from the rule.
   alignment.adjustedPriority = adjustPriority(rice.priority, alignment.alignmentScore);
-  console.log(`  → alignment: ${alignment.alignmentScore}/3, priority ${rice.priority} → ${alignment.adjustedPriority} (OKRs: ${((alignment.okrsServed as string[]) ?? []).join(",") || "none"})`);
+  console.log(
+    `  → alignment: ${alignment.alignmentScore}/3, priority ${rice.priority} → ${alignment.adjustedPriority} (OKRs: ${((alignment.okrsServed as string[]) ?? []).join(",") || "none"})`
+  );
 
   // Step 5 — User story (feature-request and feedback only)
   let story: Record<string, unknown> = {};
@@ -715,7 +708,12 @@ async function main() {
   }
 
   // Step 7 — Publish as a work item in the team's Plane project (always)
-  const publishJson = await runStep("publish", publishPrompt(labels, descriptionHtml, finalPriority, comment), [], PUBLISH_TOOLS);
+  const publishJson = await runStep(
+    "publish",
+    publishPrompt(labels, descriptionHtml, finalPriority, comment),
+    [],
+    PUBLISH_TOOLS
+  );
   const publish = parse(publishJson);
   if (!publish.skipped && !publish.workItemId)
     throw new Error(

@@ -165,7 +165,7 @@ flowchart TB
   B --> T
   subgraph pipe [ ]
     direction LR
-    T[1 · Triage \n classify + label] --> AN[2 · Analysis \n pain points · dedup]
+    T[1 · Triage \n classify + label] --> AN[2 · Analysis \n pain points · themes]
     AN --> R[3 · RICE \n score → priority]
     R --> AL[4 · Alignment \n OKR fit → modulate]
     AL --> S[5 · User story \n criteria · complexity]
@@ -196,7 +196,7 @@ Bugs & questions **skip** Analysis and Story (dotted paths); a bug's form dropdo
 | #   | Step           | Skill                                   | Always?          | Produces                                  |
 | --- | -------------- | --------------------------------------- | ---------------- | ----------------------------------------- |
 | 1   | **Triage**     | —                                       | ✅               | type + confidence, applies GitHub label   |
-| 2   | **Analysis**   | `user-feedback-synthesizer`             | feature/feedback | pain points, themes, duplicates           |
+| 2   | **Analysis**   | `user-feedback-synthesizer`             | feature/feedback | pain points, themes, quick wins           |
 | 3   | **RICE**       | `feature-prioritization-assistant`      | ✅               | Reach×Impact×Conf/Effort → priority       |
 | 4   | **Alignment**  | `plane-product-strategy` (custom skill) | ✅               | OKR fit 0–3 → modulates priority          |
 | 5   | **User story** | `prd-writer`                            | feature/feedback | story + acceptance criteria + complexity  |
