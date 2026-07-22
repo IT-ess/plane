@@ -59,7 +59,10 @@ async function runStep(
   name: string,
   prompt: string,
   skills: string[] = [],
-  allowedTools: string[] = ["Bash"]
+  allowedTools: string[] = ["Bash"],
+  // Only the publish step talks to Plane. Attaching the MCP loads ~200 tool schemas into
+  // context — a huge per-step token cost — so every other step runs without it.
+  useMcp = false
 ): Promise<string> {
   console.log(`\n${"─".repeat(60)}\n[${name.toUpperCase()}]\n${"─".repeat(60)}`);
   for await (const msg of query({
@@ -67,10 +70,11 @@ async function runStep(
     options: {
       allowedTools,
       cwd: REPO_ROOT,
-      // "local" so dev runs pick up the `plane` MCP config (local scope of ~/.claude.json) + its cached OAuth.
-      settingSources: ["project", "local"],
+      // "local" (dev) pulls in the `plane` MCP from ~/.claude.json + its cached OAuth — only wanted
+      // when this step actually needs Plane, otherwise it auto-loads every plane tool schema.
+      settingSources: useMcp ? ["project", "local"] : ["project"],
       // In CI, PLANE_MCP injects the api-key endpoint explicitly (no OAuth cache available).
-      ...(PLANE_MCP ? { mcpServers: PLANE_MCP } : {}),
+      ...(useMcp && PLANE_MCP ? { mcpServers: PLANE_MCP } : {}),
       skills,
     },
   })) {
@@ -712,7 +716,8 @@ async function main() {
     "publish",
     publishPrompt(labels, descriptionHtml, finalPriority, comment),
     [],
-    PUBLISH_TOOLS
+    PUBLISH_TOOLS,
+    true // publish is the only step that needs the Plane MCP
   );
   const publish = parse(publishJson);
   if (!publish.skipped && !publish.workItemId)
