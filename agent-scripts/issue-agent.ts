@@ -11,10 +11,6 @@ const ISSUE = {
   repo: process.env.GITHUB_REPOSITORY!,
 };
 
-// Body copy for LLM prompts only — capped so a huge issue can't inflate all 5 prompts.
-// ponytail: 4000-char ceiling; parseBugForm / storyHtml still use the full ISSUE.body.
-const BODY = ISSUE.body.length > 4000 ? ISSUE.body.slice(0, 4000) + "\n…(truncated)" : ISSUE.body;
-
 // ponytail: assumes entrypoint runs from agent-scripts/ (the workflow + test-local both do).
 const REPO_ROOT = resolve(process.cwd(), "..");
 
@@ -59,40 +55,26 @@ const SKILL = {
   story: "prd-writer",
 } as const;
 
-// Cheap model for the pure classification/scoring steps (alias "haiku" also resolves).
-const HAIKU = "claude-haiku-4-5-20251001";
-
-type StepOpts = {
-  skills?: string[];
-  allowedTools?: string[];
+async function runStep(
+  name: string,
+  prompt: string,
+  skills: string[] = [],
+  allowedTools: string[] = ["Bash"],
   // Only the publish step talks to Plane. Attaching the MCP loads ~200 tool schemas into
   // context — a huge per-step token cost — so every other step runs without it.
-  useMcp?: boolean;
-  // undefined → ANTHROPIC_MODEL (Sonnet); set HAIKU for cheap deterministic steps.
-  model?: string;
-  // true → light adaptive thinking; false → thinking off. Most steps emit a tiny fixed JSON
-  // and don't need reasoning (priority math is recomputed in TS anyway), so default is off.
-  effortLow?: boolean;
-  // Cap turns so a step that loops on a tool error can't silently burn 10× the tokens.
-  maxTurns?: number;
-};
-
-async function runStep(name: string, prompt: string, opts: StepOpts = {}): Promise<string> {
-  const { skills = [], allowedTools = ["Bash"], useMcp = false, model, effortLow = false, maxTurns = 4 } = opts;
+  useMcp = false
+): Promise<string> {
   console.log(`\n${"─".repeat(60)}\n[${name.toUpperCase()}]\n${"─".repeat(60)}`);
   for await (const msg of query({
     prompt,
     options: {
       allowedTools,
       cwd: REPO_ROOT,
-      maxTurns,
       // "local" (dev) pulls in the `plane` MCP from ~/.claude.json + its cached OAuth — only wanted
       // when this step actually needs Plane, otherwise it auto-loads every plane tool schema.
       settingSources: useMcp ? ["project", "local"] : ["project"],
       // In CI, PLANE_MCP injects the api-key endpoint explicitly (no OAuth cache available).
       ...(useMcp && PLANE_MCP ? { mcpServers: PLANE_MCP } : {}),
-      ...(model ? { model } : {}),
-      ...(effortLow ? { effort: "low" as const } : { thinking: { type: "disabled" as const } }),
       skills,
     },
   })) {
@@ -103,6 +85,53 @@ async function runStep(name: string, prompt: string, opts: StepOpts = {}): Promi
   }
   const file = `/tmp/${name}.json`;
   return existsSync(file) ? readFileSync(file, "utf-8") : "{}";
+}
+
+// Fail fast if the Plane MCP can't connect — otherwise every publish tool call silently
+// no-ops, /tmp/publish.json is never written, and the run "succeeds" with an undefined id.
+async function preflightPlaneMcp() {
+  if (process.env.PLANE_API_KEY && !process.env.PLANE_WORKSPACE_SLUG)
+    throw new Error(
+      "PLANE_API_KEY is set but PLANE_WORKSPACE_SLUG is empty — the MCP api-key endpoint " +
+        "requires the workspace slug. Set PLANE_WORKSPACE_SLUG in the workflow env."
+    );
+
+  console.log("\nPreflight: verifying Plane MCP connection…");
+  for await (const msg of query({
+    prompt: "Reply with OK.",
+    options: {
+      allowedTools: [],
+      cwd: REPO_ROOT,
+      settingSources: ["project", "local"],
+      ...(PLANE_MCP ? { mcpServers: PLANE_MCP } : {}),
+    },
+  })) {
+    if (msg.type === "system" && (msg as any).subtype === "init") {
+      const servers = (msg as any).mcp_servers as { name: string; status: string }[];
+      const plane = servers.find((s) => s.name === "plane");
+      if (!plane)
+        throw new Error(
+          "Plane MCP server is not configured. In CI, set PLANE_API_KEY (+ PLANE_WORKSPACE_SLUG); " +
+            "in dev, authenticate the `plane` MCP once so its OAuth token is cached in ~/.claude.json. " +
+            `Configured servers: ${servers.map((s) => s.name).join(", ") || "(none)"}`
+        );
+      // "pending" is transient (still connecting when init fires); only fail on the definitive rejections.
+      if (plane.status === "needs-auth" || plane.status === "failed")
+        throw new Error(
+          `Plane MCP server status is "${plane.status}". ` +
+            (plane.status === "needs-auth"
+              ? "The api-key endpoint expects `Authorization: Bearer <PLANE_API_KEY>` (not x-api-key), " +
+                "plus x-workspace-slug. Also clear a stale verdict: rm ~/.claude/mcp-needs-auth-cache.json. " +
+                "Verify: curl -sI -X POST " +
+                "https://mcp.plane.so/http/api-key/mcp -H 'Authorization: Bearer <KEY>' " +
+                "-H 'x-workspace-slug: <SLUG>' -H 'Accept: text/event-stream' -d '{}' → expect HTTP 200."
+              : "Check network access to https://mcp.plane.so and the credentials.")
+        );
+      console.log(`  → Plane MCP status: ${plane.status}.`);
+      return;
+    }
+  }
+  throw new Error("Preflight ended without an init message — the agent SDK failed to start.");
 }
 
 function parse<T = Record<string, unknown>>(json: string): T {
@@ -125,7 +154,7 @@ Issue number: ${ISSUE.number}
 Title: ${ISSUE.title}
 
 Body:
-${BODY}
+${ISSUE.body}
 
 ## Your tasks
 
@@ -168,7 +197,7 @@ Issue #${ISSUE.number}: "${ISSUE.title}"
 Type: ${triage.type}
 
 Body:
-${BODY}
+${ISSUE.body}
 
 ## Your tasks
 
@@ -216,7 +245,7 @@ Feature intent: ${analysis.featureIntent ?? "N/A"}`
 }
 
 Body:
-${BODY}
+${ISSUE.body}
 
 ## RICE scoring task
 
@@ -294,7 +323,7 @@ Feature intent: ${analysis.featureIntent ?? ISSUE.title}
 RICE priority (before alignment): ${rice.priority ?? "medium"}
 
 Body:
-${BODY}
+${ISSUE.body}
 
 ## Plane's OKRs (illustrative)
 - O1 — Win the "AI-native PM" category (Plane AI auto-triage/assignment, MCP/agent connectors, AI-assisted actions).
@@ -347,7 +376,7 @@ Pain points: ${JSON.stringify(analysis.painPoints ?? [])}
 Themes: ${JSON.stringify(analysis.themes ?? [])}
 
 Body:
-${BODY}
+${ISSUE.body}
 
 ## Your task
 
@@ -626,38 +655,31 @@ async function main() {
       throw new Error(`Skill "${s}" not found under .claude/skills/ — check the name`);
   }
 
-  // Step 1 — Triage (always) — pure classification → cheap model, no thinking.
-  const triageJson = await runStep("triage", triagePrompt(), { model: HAIKU });
+  // Fail fast if Plane MCP is unreachable, before spending 6 steps of work on a run that can't publish.
+  await preflightPlaneMcp();
+
+  // Step 1 — Triage (always)
+  const triageJson = await runStep("triage", triagePrompt());
   const triage = parse(triageJson);
   console.log(`  → type: ${triage.type}, confidence: ${triage.confidence}`);
 
   const isBugOrQuestion = triage.type === "bug" || triage.type === "question";
 
-  // Step 2 — Analysis (skipped for bugs and questions) — synthesis benefits from light thinking.
+  // Step 2 — Analysis (skipped for bugs and questions)
   let analysis: Record<string, unknown> = {};
   if (!isBugOrQuestion) {
-    const analysisJson = await runStep("analysis", analysisPrompt(triage), {
-      skills: [SKILL.analysis],
-      effortLow: true,
-      maxTurns: 5,
-    });
+    const analysisJson = await runStep("analysis", analysisPrompt(triage), [SKILL.analysis]);
     analysis = parse(analysisJson);
     console.log(`  → pain points: ${((analysis.painPoints as string[]) ?? []).length}`);
   }
 
-  // Step 3 — RICE (always) — scores are recomputed/clamped in TS, so no thinking needed.
-  const riceJson = await runStep("rice", ricePrompt(triage, analysis), {
-    skills: [SKILL.rice],
-    model: HAIKU,
-  });
+  // Step 3 — RICE (always)
+  const riceJson = await runStep("rice", ricePrompt(triage, analysis), [SKILL.rice]);
   const rice = parse(riceJson);
   console.log(`  → RICE: ${rice.riceScore} (${rice.priority})`);
 
-  // Step 4 — Strategic alignment (always) — modulates the RICE priority (bump recomputed in TS).
-  const alignmentJson = await runStep("alignment", alignmentPrompt(triage, analysis, rice), {
-    skills: [SKILL.alignment],
-    model: HAIKU,
-  });
+  // Step 4 — Strategic alignment (always) — modulates the RICE priority
+  const alignmentJson = await runStep("alignment", alignmentPrompt(triage, analysis, rice), [SKILL.alignment]);
   const alignment = parse(alignmentJson);
   // Guard: recompute the tier bump from the model's score so the label can't drift from the rule.
   alignment.adjustedPriority = adjustPriority(rice.priority, alignment.alignmentScore);
@@ -665,14 +687,10 @@ async function main() {
     `  → alignment: ${alignment.alignmentScore}/3, priority ${rice.priority} → ${alignment.adjustedPriority} (OKRs: ${((alignment.okrsServed as string[]) ?? []).join(",") || "none"})`
   );
 
-  // Step 5 — User story (feature-request and feedback only) — writing benefits from light thinking.
+  // Step 5 — User story (feature-request and feedback only)
   let story: Record<string, unknown> = {};
   if (!isBugOrQuestion) {
-    const storyJson = await runStep("story", storyPrompt(analysis), {
-      skills: [SKILL.story],
-      effortLow: true,
-      maxTurns: 5,
-    });
+    const storyJson = await runStep("story", storyPrompt(analysis), [SKILL.story]);
     story = parse(storyJson);
     console.log(`  → complexity: ${story.complexity}`);
   }
@@ -685,20 +703,22 @@ async function main() {
   const labels = [String(triage.type ?? "other"), ...bugForm.labels];
   const descriptionHtml = bugForm.sections.length ? bugHtml(bugForm.sections) : storyHtml(story);
 
-  // Step 6 — Post comment + priority label to GitHub (skipped in local test mode) — two gh calls.
+  // Step 6 — Post comment + priority label to GitHub (skipped in local test mode)
   if (POST_GH) {
-    await runStep("post", postPrompt(finalPriority, comment), { maxTurns: 5 });
+    await runStep("post", postPrompt(finalPriority, comment));
     console.log("\n✅ Analysis posted to issue #" + ISSUE.number);
   } else {
     console.log("\n⏭️  SKIP_GITHUB=1 — skipped GitHub label + comment");
   }
 
-  // Step 7 — Publish as a work item in the team's Plane project (always) — ~6 sequential MCP calls.
-  const publishJson = await runStep("publish", publishPrompt(labels, descriptionHtml, finalPriority, comment), {
-    allowedTools: PUBLISH_TOOLS,
-    useMcp: true, // publish is the only step that needs the Plane MCP
-    maxTurns: 12,
-  });
+  // Step 7 — Publish as a work item in the team's Plane project (always)
+  const publishJson = await runStep(
+    "publish",
+    publishPrompt(labels, descriptionHtml, finalPriority, comment),
+    [],
+    PUBLISH_TOOLS,
+    true // publish is the only step that needs the Plane MCP
+  );
   const publish = parse(publishJson);
   if (!publish.skipped && !publish.workItemId)
     throw new Error(
