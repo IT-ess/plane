@@ -254,3 +254,16 @@ layout: section
 The repo is on Github <code>IT-ess/plane</code>.
 <br/>Agent's Code: <code>agent-scripts/issue-agent.ts</code>
 <br/> Workflow: <code>.github/workflows/issue-agent.yml</code>
+
+---
+
+# Processus de création
+
+1. Réflexions sur le travail quotidien d'un PO, et des limites d'un agent PO (auto-interview)
+2. Définition d'un cas concret, avec des données réelles
+3. Brainstorming sur tout ce que pourrait faire cet agent
+4. Test de plusieurs plateformes (n8n, Claude Code local, Claude Agent SDK)
+5. Création d'un premier agent bout en bout (Github->Plane)
+6. Itérations sur l'agent, recherche de skills, création du skill de stratégie
+7. Préparation de la démo avec des exemples d'issues concrets + présentation
+8. Tentatives d'optimisations des coûts
